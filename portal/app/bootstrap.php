@@ -1,0 +1,70 @@
+<?php
+declare(strict_types=1);
+
+define('APP', __DIR__);
+define('ROOT', dirname(__DIR__));
+
+$CONFIG = require APP . '/config.php';
+if (is_file(APP . '/config.local.php')) {
+    $CONFIG = array_merge($CONFIG, require APP . '/config.local.php');
+}
+
+date_default_timezone_set($CONFIG['timezone'] ?? 'UTC');
+error_reporting(E_ALL);
+ini_set('display_errors', !empty($CONFIG['debug']) ? '1' : '0');
+ini_set('log_errors', '1');
+
+// ---------- security headers ----------
+if (!headers_sent()) {
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: same-origin');
+    header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'");
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('Pragma: no-cache');
+}
+
+// ---------- base URL ----------
+function base_url(): string {
+    global $CONFIG;
+    static $b = null;
+    if ($b !== null) return $b;
+    if (!empty($CONFIG['base_url'])) return $b = rtrim($CONFIG['base_url'], '/');
+    $doc = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '';
+    $root = realpath(ROOT) ?: ROOT;
+    $b = '';
+    if ($doc !== '' && str_starts_with($root, $doc)) {
+        $b = str_replace('\\', '/', substr($root, strlen($doc)));
+    }
+    return $b = rtrim($b, '/');
+}
+function url(string $path = ''): string { return base_url() . '/' . ltrim($path, '/'); }
+
+// ---------- session ----------
+$https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+      || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+if ($https && !headers_sent()) {
+    header('Strict-Transport-Security: max-age=31536000');
+}
+
+// Standard, single session cookie across all portals and routes
+session_name('PTPSESSID');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => base_url() === '' ? '/' : base_url() . '/',
+    'secure'   => $https,
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+ini_set('session.use_strict_mode', '1');
+ini_set('session.use_only_cookies', '1');
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require APP . '/db.php';
+require APP . '/helpers.php';
+require APP . '/stages.php';
+require APP . '/auth.php';

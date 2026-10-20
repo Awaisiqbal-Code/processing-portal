@@ -1,0 +1,17 @@
+# Exclude local backup copies, spreadsheets, and temporary scratch folders from Git
+database/
+database_copy/
+database_copy.zip
+database_for_bot_training/
+database_for_bot_training.zip
+scratch/
+*.xlsx
+*.docx
+~$*
+Central_Database_Integration_Questionnaire_Filled.pdf
+portal/app/portal.sqlite.bak_before_sheet_import
+portal/app/__pycache__/
+portal/uploads/cache/*
+
+# Explicitly INCLUDE the active SQLite database for Private GitHub -> Railway deployment
+!portal/app/portal.sqlite
