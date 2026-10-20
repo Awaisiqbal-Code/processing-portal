@@ -14,7 +14,8 @@ if [ -n "$VOLUME_DIR" ] && [ -d "$VOLUME_DIR" ]; then
         echo "[Railway Init] First boot with persistent volume: copying existing portal.sqlite to $VOLUME_DIR/portal.sqlite..."
         cp /app/portal/app/portal.sqlite "$VOLUME_DIR/portal.sqlite"
     else
-        echo "[Railway Init] Using existing persistent database at $VOLUME_DIR/portal.sqlite (preserving all records)..."
+        echo "[Railway Init] Syncing corrected Front-End meeting fields into persistent database at $VOLUME_DIR/portal.sqlite..."
+        sqlite3 "$VOLUME_DIR/portal.sqlite" "ATTACH DATABASE '/app/portal/app/portal.sqlite' AS bundled; UPDATE students SET consent = (SELECT b.consent FROM bundled.students b WHERE b.id = students.id), docs_checklist = (SELECT b.docs_checklist FROM bundled.students b WHERE b.id = students.id), initial_meeting = (SELECT b.initial_meeting FROM bundled.students b WHERE b.id = students.id), second_meeting = (SELECT b.second_meeting FROM bundled.students b WHERE b.id = students.id), tax_meeting = (SELECT b.tax_meeting FROM bundled.students b WHERE b.id = students.id), meeting_priority = (SELECT b.meeting_priority FROM bundled.students b WHERE b.id = students.id), follow_up_1 = (SELECT b.follow_up_1 FROM bundled.students b WHERE b.id = students.id) WHERE EXISTS (SELECT 1 FROM bundled.students b WHERE b.id = students.id); DETACH DATABASE bundled;" || true
     fi
     export PORTAL_SQLITE="$VOLUME_DIR/portal.sqlite"
 else
