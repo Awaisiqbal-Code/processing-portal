@@ -8,14 +8,17 @@ require_once __DIR__ . '/../drive_resolver.php';
 $driveAssets = resolve_student_drive_assets((int)$sid);
 $allDriveFiles = $driveAssets['files'] ?? [];
 
-$r = q('SELECT s.id, s.name, s.counselor, s.branch, s.intake, s.drive_link, s.meeting_link,
+$r = q('SELECT s.id, s.name, s.counselor, s.branch, s.intake, s.drive_link, s.meeting_link, s.drive_files_json,
                s.consent, s.docs_checklist, s.initial_meeting, s.recorded_uploaded, s.second_meeting,
                s.tax_meeting, s.offer, s.enrollment, s.visa,
                s.follow_up_1, s.follow_up_2, s.follow_up_3,
                s.email, s.portal_id, s.shortlisting, s.pending_docs_note,
-               s.officer_id,
-               o.name AS officer_name
-        FROM students s LEFT JOIN users o ON o.id = s.officer_id
+               s.officer_id, s.frontend_officer_id,
+               o.name AS officer_name,
+               COALESCE(fo.name, s.frontend_officer_name) AS frontend_officer_name
+        FROM students s
+        LEFT JOIN users o ON o.id = s.officer_id
+        LEFT JOIN users fo ON fo.id = s.frontend_officer_id
         WHERE s.id = ?', [$sid])->fetch();
 if (!$r) {
     if ($preview) { http_response_code(404); exit('Student not found.'); }
@@ -142,13 +145,13 @@ if ($preview): ?>
           <b><?= h($s[0]) ?></b>
           <div class="m"><?= h($s[2]) ?></div>
           <?php if ($isStaff): ?>
-            <?php if (in_array($s[1], ['initial_meeting', 'recorded_uploaded', 'second_meeting'], true)): ?>
+            <?php if ($s[1] === 'recorded_uploaded'): ?>
               <?php if ($hasMeeting): ?>
                 <div style="margin-top:0.35rem; display:flex; gap:0.4rem; flex-wrap:wrap;">
                   <a class="btn sm" href="<?= h($meetingUrl) ?>" target="_blank" rel="noopener noreferrer">🎥 Open Meeting / Recording ↗</a>
                   <a class="btn sm ghost" href="<?= h($meetingUrl . '&download=1') ?>">⬇ Download Recording</a>
                 </div>
-              <?php elseif ($s[1] === 'recorded_uploaded'): ?>
+              <?php else: ?>
                 <div class="small" style="color:#ef4444; margin-top:0.35rem; font-weight:600;">
                   ⚠️ Recorded meeting video not available
                 </div>
@@ -236,6 +239,21 @@ if ($preview): ?>
     <!-- Additional / Custom Documents Section (Add Manually) -->
     <?php
       $customDocs = q("SELECT * FROM custom_documents WHERE student_id = ? ORDER BY id DESC", [$sid])->fetchAll();
+      $mappedFileIds = [];
+      foreach ($docs as $dItem) {
+          $fp = (string)($dItem['file_path'] ?? '');
+          if (str_starts_with($fp, 'gdrive:')) {
+              $mappedFileIds[substr($fp, 7)] = true;
+          }
+      }
+      $extraDriveFiles = array_values(array_filter($allDriveFiles, function ($gf) use ($mappedFileIds) {
+          $fid = (string)($gf['id'] ?? '');
+          if ($fid === '' || isset($mappedFileIds[$fid])) return false;
+          if (!empty($gf['is_meeting'])) return false;
+          $fn = strtolower((string)($gf['name'] ?? '') . ' ' . (string)($gf['raw_title'] ?? ''));
+          if (str_contains($fn, '.mp4') || str_contains($fn, '.m4a') || str_contains($fn, ' video')) return false;
+          return true;
+      }));
     ?>
     <section class="panel">
       <div class="panel-h">
@@ -245,7 +263,7 @@ if ($preview): ?>
         </div>
       </div>
 
-      <?php if (!empty($customDocs) || ($isStaff && !empty($allDriveFiles))): ?>
+      <?php if (!empty($customDocs) || ($isStaff && !empty($extraDriveFiles))): ?>
       <div class="list" style="margin-bottom: 1.25rem;">
         <?php foreach ($customDocs as $cd): 
           $cKb = round(($cd['file_size'] ?? 0) / 1024, 1);
@@ -272,29 +290,24 @@ if ($preview): ?>
         <?php endforeach; ?>
 
         <?php if ($isStaff): ?>
-          <?php foreach ($allDriveFiles as $gf):
+          <?php foreach ($extraDriveFiles as $gf):
             $fid = (string)($gf['id'] ?? '');
             $fn  = (string)($gf['name'] ?? 'Document');
             $sf  = (string)($gf['subfolder'] ?? '');
             $sz  = (string)($gf['size'] ?? '');
-            $isMeet = !empty($gf['is_meeting']);
-            $viewHref = $isMeet
-              ? 'https://drive.google.com/file/d/' . rawurlencode($fid) . '/view'
-              : url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn));
-            $dlHref = $isMeet
-              ? 'https://drive.google.com/uc?export=download&id=' . rawurlencode($fid)
-              : url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn) . '&download=1');
+            $viewHref = url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn));
+            $dlHref = url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn) . '&download=1');
           ?>
             <div class="li" style="flex-wrap:wrap; gap:0.5rem; justify-content:space-between; align-items:center;">
               <div>
-                <b><?= $isMeet ? '🎥 ' : '📄 ' ?><?= h($fn) ?></b>
+                <b>📄 <?= h($fn) ?></b>
                 <div class="small muted">
                   <?= $sf !== '' ? 'Cloud Folder: <b>' . h($sf) . '</b>' : 'Cloud Storage' ?>
                   <?= $sz !== '' ? ' · ' . h($sz) : '' ?>
                 </div>
               </div>
               <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
-                <a class="btn sm" href="<?= h($viewHref) ?>" target="_blank" rel="noopener noreferrer"><?= $isMeet ? '🎥 Play Video' : '📄 View' ?></a>
+                <a class="btn sm" href="<?= h($viewHref) ?>" target="_blank" rel="noopener noreferrer">📄 View</a>
                 <a class="btn sm primary" href="<?= h($dlHref) ?>">⬇ Download</a>
               </div>
             </div>
@@ -328,7 +341,8 @@ if ($preview): ?>
       <div class="panel-h"><h2>Your team</h2></div>
       <div class="list">
         <div class="li"><span>Counselor</span><b><?= h($r['counselor'] ?: 'Not assigned') ?></b></div>
-        <div class="li"><span>Processing officer</span><b><?= h($r['officer_name'] ?: 'Not assigned') ?></b></div>
+        <div class="li"><span>Front-End Officer</span><b><?= h($r['frontend_officer_name'] ?: 'Not assigned') ?></b></div>
+        <div class="li"><span>Back-End Officer</span><b><?= h($r['officer_name'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Branch</span><b><?= h($r['branch']) ?></b></div>
         <div class="li"><span>Intake</span><b><?= h($r['intake']) ?></b></div>
       </div>

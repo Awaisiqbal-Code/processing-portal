@@ -55,20 +55,23 @@ function safe_link(?string $u): ?string {
 function student_meeting_url(array $s): ?string {
     $ml = trim((string)($s['meeting_link'] ?? ''));
     $dl = trim((string)($s['drive_link'] ?? ''));
-    if ($ml !== '' && $ml !== $dl && safe_link($ml)) {
+    if ($ml !== '' && $ml !== $dl && safe_link($ml) && !str_contains($ml, '/drive/folders/')) {
         return $ml;
     }
     if (!empty($s['drive_files_json'])) {
         $dfj = is_array($s['drive_files_json']) ? $s['drive_files_json'] : json_decode((string)$s['drive_files_json'], true);
         if (is_array($dfj)) {
-            if (!empty($dfj['meeting_link']) && $dfj['meeting_link'] !== $dl && safe_link($dfj['meeting_link'])) {
+            if (!empty($dfj['meeting_link']) && $dfj['meeting_link'] !== $dl && safe_link($dfj['meeting_link']) && !str_contains((string)$dfj['meeting_link'], '/drive/folders/')) {
                 return trim((string)$dfj['meeting_link']);
             }
             if (!empty($dfj['files']) && is_array($dfj['files'])) {
                 foreach ($dfj['files'] as $f) {
                     $fn = strtolower($f['name'] ?? '');
-                    $sf = strtolower($f['subfolder'] ?? '');
-                    if (!empty($f['is_meeting']) || str_ends_with($fn, '.mp4') || str_contains($fn, 'zoom') || str_contains($sf, 'zoom') || str_contains($sf, 'meeting') || str_contains($sf, 'record')) {
+                    $rt = strtolower($f['raw_title'] ?? '');
+                    if (preg_match('/\.(pdf|jpg|jpeg|png|doc|docx)\b/i', $fn) || str_contains($rt, ' pdf')) {
+                        continue;
+                    }
+                    if (!empty($f['is_meeting']) || str_ends_with($fn, '.mp4') || str_ends_with($fn, '.m4a') || str_contains($rt, 'video')) {
                         if (!empty($f['id'])) {
                             return 'https://drive.google.com/file/d/' . $f['id'] . '/view';
                         }

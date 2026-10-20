@@ -141,15 +141,14 @@ function classify_drive_file_to_doc_index(string $fileName, string $subfolder = 
     if (str_contains($fn, 'passport')) return 0;
 
     // 1: CNIC / B-form
-    foreach (['cnic', 'id card', 'id_card', 'idcard', 'b-form', 'b form', 'nic', 'identity'] as $k) {
-        if (str_contains($fn, $k)) return 1;
+    if (preg_match('/\b(cnic|nic|id[\s_\-]?card|b[\s_\-]?form|identity|frc)\b/i', $fn)) {
+        return 1;
     }
 
     // 2: Matric certificate & transcript
-    foreach (['ssc', 'matric', 'secondary school', '10th', 'o level', 'o-level'] as $k) {
-        if (str_contains($fn, $k) && !str_contains($fn, 'hssc') && !str_contains($fn, 'higher secondary')) {
-            return 2;
-        }
+    if ((preg_match('/\b(ssc|matric|matriculation|10th)\b/i', $fn) || str_contains($fn, 'secondary school') || str_contains($fn, 'o level') || str_contains($fn, 'o-level'))
+        && !str_contains($fn, 'hssc') && !str_contains($fn, 'higher secondary') && !str_contains($fn, 'transscript')) {
+        return 2;
     }
 
     // 3: Intermediate certificate & transcript
@@ -173,8 +172,8 @@ function classify_drive_file_to_doc_index(string $fileName, string $subfolder = 
     }
 
     // 7: Bank statement
-    foreach (['bank', 'statement', 'account maintenance', 'financial statement', 'bank cert'] as $k) {
-        if (str_contains($fn, $k)) return 7;
+    foreach (['bank', 'bank statement', 'account statement', 'account maintenance', 'financial statement', 'bank cert', 'closing statement'] as $k) {
+        if (str_contains($fn, $k) && !str_contains($fn, 'performance statement')) return 7;
     }
 
     // 8: Tax documents
@@ -243,7 +242,8 @@ function resolve_student_drive_assets(int $studentId, bool $force = false): arra
             }
         } else {
             $ln = strtolower($it['name'] . ' ' . $it['raw_title']);
-            if (str_contains($ln, 'zoom') || str_contains($ln, 'meet') || str_contains($ln, '.mp4') || str_contains($ln, 'video')) {
+            $isDocExt = (bool)preg_match('/\.(pdf|jpg|jpeg|png|doc|docx)\b/i', $it['name']);
+            if (!$isDocExt && (str_contains($ln, 'zoom') || str_contains($ln, 'meet') || str_contains($ln, '.mp4') || str_contains($ln, '.m4a') || str_contains($ln, 'video'))) {
                 $meetingUrl = 'https://drive.google.com/file/d/' . $it['id'] . '/view';
                 $it['subfolder'] = '';
                 $it['is_meeting'] = true;
@@ -270,7 +270,8 @@ function resolve_student_drive_assets(int $studentId, bool $force = false): arra
                 if ($subIt['is_folder']) continue;
                 $subIt['subfolder'] = $sfName;
                 $rawLower = strtolower($subIt['name'] . ' ' . $subIt['raw_title']);
-                if ($isMeetingFolder || str_contains($rawLower, 'video') || str_ends_with(strtolower($subIt['name']), '.mp4')) {
+                $isDocExt = (bool)preg_match('/\.(pdf|jpg|jpeg|png|doc|docx)\b/i', $subIt['name']) || str_contains($rawLower, ' pdf');
+                if (!$isDocExt && ($isMeetingFolder || str_contains($rawLower, 'video') || str_ends_with(strtolower($subIt['name']), '.mp4') || str_ends_with(strtolower($subIt['name']), '.m4a'))) {
                     $meetingUrl = 'https://drive.google.com/file/d/' . $subIt['id'] . '/view';
                     $subIt['is_meeting'] = true;
                     $allFiles[] = $subIt;
