@@ -59,9 +59,11 @@ function logout_now(?string $role = null): void {
     // If no roles remain authenticated, destroy session and expire cookie
     if (empty($_SESSION['auth'])) {
         $_SESSION = [];
+        unset($_COOKIE['PTPSESSDATA']);
         if (ini_get('session.use_cookies')) {
             $p = session_get_cookie_params();
             setcookie(session_name(), '', time() - 3600, $p['path'], $p['domain'], $p['secure'], $p['httponly']);
+            setcookie('PTPSESSDATA', '', time() - 3600, $p['path'], $p['domain'], $p['secure'], $p['httponly']);
         }
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_destroy();
