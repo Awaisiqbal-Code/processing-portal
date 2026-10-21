@@ -1,39 +1,51 @@
 <?php
 declare(strict_types=1);
-// Shared sign-in page. Expects $portal = 'admin' | 'officer' | 'student'.
+// Unified sign-in page for Admin, Processing Officers (Front-End & Back-End), and Students.
 
-$next = safe_next($portal, get('next'));
-$u = current_user($portal);
-if ($u && $u['role'] === $portal && get('switch') !== '1') redirect($next ?: PORTALS[$portal]['home']);
+$portal = $portal ?? 'officer';
+$activeUser = current_user();
+if ($activeUser && get('switch') !== '1') {
+    $next = safe_next($activeUser['role'], get('next'));
+    redirect($next ?: PORTALS[$activeUser['role']]['home']);
+}
 
 $error = null;
 if (is_post()) {
     csrf_check();
     $error = attempt_login($portal, post('username'), $_POST['password'] ?? '');
-    if ($error === null) redirect($next ?: PORTALS[$portal]['home']);
+    if ($error === null) {
+        $loggedRole = $_SESSION['last_login_role'] ?? $portal;
+        $next = safe_next($loggedRole, get('next'));
+        redirect($next ?: PORTALS[$loggedRole]['home']);
+    }
 }
 
-$hint = [
-    'admin'   => 'For office administrators.',
-    'officer' => 'For processing officers. You will see only the students assigned to you.',
-    'student' => 'Use the username and password given to you by the office.',
-][$portal];
-
-page_start(PORTALS[$portal]['label']);
+page_start('Sign In · Unified Portal');
 ?>
 <div class="login">
-  <div class="brand"><div class="mark">P</div><div><div class="app"><?= h($CONFIG['app_name']) ?></div><small><?= h(PORTALS[$portal]['label']) ?></small></div></div>
+  <div class="brand">
+    <div class="mark">P</div>
+    <div>
+      <div class="app"><?= h($CONFIG['app_name']) ?></div>
+      <small>Unified Sign-In Portal (Admin · Officers · Students)</small>
+    </div>
+  </div>
   <section class="panel">
-    <h1>Sign in</h1>
-    <p class="muted"><?= h($hint) ?></p>
+    <h1>Sign in to your account</h1>
+    <p class="muted">Enter your username and password. The portal will automatically open your <b>Admin</b>, <b>Processing Officer</b> (Minahil, Sehrish, Farwa, Nimra, Mujassam), or <b>Student</b> workspace.</p>
+    <?php if ($activeUser): ?>
+      <div class="flash" style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
+        <span class="small">Currently signed in as <b><?= h($activeUser['name']) ?></b> (<?= h(ucfirst($activeUser['role'])) ?>)</span>
+        <a class="btn sm primary" href="<?= h(url(PORTALS[$activeUser['role']]['home'])) ?>">Continue to Dashboard →</a>
+      </div>
+    <?php endif; ?>
     <?php if ($error): ?><div class="flash bad" role="alert"><?= h($error) ?></div><?php endif; ?>
     <form method="post" class="stack" autocomplete="on">
       <?= csrf_field() ?>
-      <label class="f"><span>Username</span><input name="username" id="username" required autocomplete="username" value="<?= h(post('username')) ?>" autofocus></label>
-      <label class="f"><span>Password</span><input name="password" id="password" type="password" required autocomplete="current-password"></label>
+      <label class="f"><span>Username</span><input name="username" id="username" required autocomplete="username" placeholder="e.g. admin, nimra, mujassam, minahil, sehrish, farwa" value="<?= h(post('username')) ?>" autofocus></label>
+      <label class="f"><span>Password</span><input name="password" id="password" type="password" required autocomplete="current-password" placeholder="Enter your password"></label>
       <button class="btn primary" type="submit">Sign in</button>
     </form>
   </section>
-  <p class="muted small"><a href="<?= h(url('index.php')) ?>">Back to all portals</a></p>
 </div>
 <?php page_end();

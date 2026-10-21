@@ -48,9 +48,14 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 </head>
 <body>
 <div class="wrap">
-<?php if ($u): ?>
+<?php if ($u):
+    $roleBadge = ucfirst($u['role']);
+    if ($u['role'] === 'officer') {
+        $roleBadge = (($u['department'] ?? 'backend') === 'frontend') ? 'Front-End Officer' : 'Back-End Officer';
+    }
+?>
 <header class="top">
-  <a class="brand" href="<?= h(url('index.php')) ?>" style="text-decoration:none; color:inherit;"><div class="mark">P</div><div><div class="app"><?= h($CONFIG['app_name']) ?></div><small><?= h($portalLabel) ?></small></div></a>
+  <a class="brand" href="<?= h(url(PORTALS[$u['role']]['home'] ?? 'index.php')) ?>" style="text-decoration:none; color:inherit;"><div class="mark">P</div><div><div class="app"><?= h($CONFIG['app_name']) ?></div><small><?= h($portalLabel) ?></small></div></a>
   <nav class="tabs">
     <?php foreach (nav_items($u['role']) as $href => $label): ?>
       <a href="<?= h(url($href)) ?>" <?= $self === $href ? 'aria-current="page"' : '' ?>><?= h($label) ?></a>
@@ -59,9 +64,9 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
   </nav>
   <div class="who">
     <?= theme_toggle_btn() ?>
-    <span class="role"><?= h(ucfirst($u['role'] === 'officer' ? 'Officer' : $u['role'])) ?></span>
+    <span class="role"><?= h($roleBadge) ?></span>
     <b><?= h($u['name']) ?></b>
-    <a class="btn sm ghost" href="<?= h(url('index.php')) ?>">All portals</a>
+    <a class="btn sm ghost" href="<?= h(url('index.php?switch=1')) ?>">Switch account</a>
     <form method="post" action="<?= h(url('logout.php')) ?>"><?= csrf_field() ?><input type="hidden" name="role" value="<?= h($u['role']) ?>"><input type="hidden" name="portal" value="<?= h($u['role']) ?>"><button class="btn sm ghost" type="submit">Sign out</button></form>
   </div>
 </header>
