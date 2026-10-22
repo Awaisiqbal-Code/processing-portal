@@ -6,8 +6,6 @@ database_for_bot_training/
 database_for_bot_training.zip
 scratch/
 backups/
-storage_secure/
-portal/storage_secure/
 *.xlsx
 *.docx
 ~$*
@@ -18,7 +16,7 @@ portal/uploads/cache/*
 
 # Exclude all generated credentials files (never commit credentials to git)
 credentials_*.txt
-*credentials*.txt
+*credentials*
 *.secret
 
 # Explicitly INCLUDE the active SQLite database for Private GitHub -> Railway deployment

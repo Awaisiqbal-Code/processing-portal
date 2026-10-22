@@ -7,8 +7,6 @@ database_for_bot_training/
 database_for_bot_training.zip
 scratch/
 backups/
-storage_secure/
-portal/storage_secure/
 *.xlsx
 *.docx
 ~$*
@@ -19,5 +17,5 @@ portal/uploads/cache/*
 .git/
 .env*
 credentials_*.txt
-*credentials*.txt
+*credentials*
 *.secret

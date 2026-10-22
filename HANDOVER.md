@@ -142,4 +142,4 @@ All maintenance tasks can be executed headlessly via CLI:
 | Safe Migrations | Runs pending migrations with automated backups | `php portal/app/migrate.php` |
 | Super Admin Reset | Emergency super_admin password recovery | `php portal/app/cli_reset_super_admin.php "<password>"` |
 | Credential Generator | Generates unique random passwords for staff | `php portal/app/cli_generate_production_credentials.php` |
-| Pending Alerts Cron | Hourly cron for 48h/72h notifications | `php portal/cron/reminders.php` |
+| Pending Alerts Cron | Hourly cron for 48h/72h notifications | `php portal/cron/pending_alerts.php` |

@@ -1,182 +1,141 @@
-# Production Deployment & Migration Runbook: Processing Portal
+# Production Deployment Runbook: Processing Portal (Railway)
 
-This runbook defines the exact, fail-safe production rollout procedure to transition live staff usage from ephemeral Vercel to Railway (with persistent volume storage), ensuring **zero data loss** and **safe automated dual-deployment**.
-
----
-
-## 1. Architectural Reality & Platform Behavior
-
-| Characteristic | Vercel (`processing-portal.vercel.app`) | Railway (`processing-portal-production.up.railway.app`) |
-|---|---|---|
-| **Runtime** | AWS Lambda Serverless Function (`vercel-php`) | Persistent Docker Container |
-| **Filesystem** | **Ephemeral** (`/tmp` copied from git on cold start) | **Persistent Volume** (`/data` mounted disk) |
-| **Data Durability** | **Writes lost on cold start / restart / redeploy** | **Fully preserved across restarts and deploys** |
-| **Deployment Trigger** | Auto-deploys on push to git `main` | Auto-deploys on push to git `main` |
-| **Target Role** | **Zero-write redirector** (`Location: https://...railway.app`) | **Single Source of Truth (Production Host)** |
-
-> [!WARNING]
-> Because both Vercel and Railway deploy automatically from the `main` branch, you must **NOT** merge or push to `main` until the Railway volume and database have been verified.
+This runbook defines the exact, verified deployment and migration procedures for the Processing Portal on Railway.
 
 ---
 
-## 2. Pre-Rollout Phase: Verification & Rescue
+## 1. Pre-Deployment Prerequisites
 
-### Step 2.1: Verify Baseline Database Integrity
-Confirm that the database being migrated is identical to the baseline committed in git:
-- `git show HEAD:portal/app/portal.sqlite` SHA256: `2b0fe44ee2853db75cdc3ebf13b93f995bc886167be79fb53880b6886190d267`
-- Exact 265 students, 3,180 documents preserved, 271 initial users.
-
-### Step 2.2: Maintenance Notice
-Inform staff:
-> *"Portal Maintenance in progress (15-30 mins). Please save current work and do not submit new edits until the upgrade is complete."*
-
-### Step 2.3: Vercel Data Rescue (Export Check)
-In case staff made edits on a warm Vercel container today:
-1. Log in to `https://processing-portal.vercel.app` as Admin.
-2. Go to the student list and export the latest student CSV / table data.
-3. Compare the exported rows with the local database to verify if any remarks, stages, or counselor notes were modified. If any exist, apply them before running migrations.
-
----
-
-## 3. Railway Persistent Storage Setup
-
-### Step 3.1: Verify Persistent Volume on Railway
-In Railway Dashboard:
-1. Open your Service -> **Settings** -> **Volumes**.
-2. Verify that a persistent volume is attached with **Mount Path** set to `/data`.
-3. If not present, click **Add Volume**, set mount path to `/data`, and redeploy.
-
-### Step 3.2: Verify Required Railway Environment Variables
-In Railway Dashboard -> Service -> **Variables**, ensure these are set:
-```env
-RAILWAY_ENVIRONMENT=production
-RAILWAY_VOLUME_MOUNT_PATH=/data
-PORTAL_SQLITE=/data/portal.sqlite
-PORTAL_UPLOADS_DIR=/data/uploads
-PORTAL_STORAGE_SECURE_DIR=/data/storage_secure
-PORTAL_APP_KEY=<64-char hex secret from credentials_production_env.txt>
-PORTAL_CSRF_SECRET=<64-char hex secret from credentials_production_env.txt>
-API_ENABLED=0
-TZ=Asia/Karachi
-```
-
-### Step 3.3: Verify Container Shell & Volume via SSH
-Test that Railway container SSH is functioning and check `/data`:
-```bash
-railway ssh "ls -la /data"
-```
-Ensure `/data` exists and is writable.
-
----
-
-## 4. Live Migration & Production Database Staging
-
+### 1.1 Railway Volume Verification
 > [!IMPORTANT]
-> All execution commands inside the production container must use `railway ssh`.
+> A persistent volume **MUST** be mounted at `/data`.
+> In production (`RAILWAY_ENVIRONMENT=production`), if `/data` is missing or not writable, the application blocks all database write operations and displays a blocking alert banner to administrators to prevent container disk data loss.
 
-### Step 4.1: Live Pre-Migration Backup on Railway
-If `/data/portal.sqlite` already exists on the Railway volume, create a timestamped safety backup:
+In your Railway Project Dashboard:
+1. Open your Service -> **Settings** -> **Volumes**.
+2. Verify a persistent volume is attached with **Mount Path** set to `/data`.
+3. If not attached, click **Add Volume**, name it `portal-data`, and set mount path to `/data`.
+
+### 1.2 Required Environment Variables
+Add/verify the following variables in Railway Service -> **Variables**:
+
+| Variable Name | Recommended Value | Purpose |
+|---|---|---|
+| `RAILWAY_ENVIRONMENT` | `production` | Enables production security guards and volume health enforcement |
+| `RAILWAY_VOLUME_MOUNT_PATH` | `/data` | Path to persistent disk mount |
+| `PORTAL_SQLITE` | `/data/portal.sqlite` | SQLite database file location |
+| `PORTAL_UPLOADS_DIR` | `/data/uploads` | Uploaded student dossiers & attachments |
+| `PORTAL_STORAGE_SECURE_DIR` | `/data/storage_secure` | Secure consent templates & signed forms |
+| `PORTAL_APP_KEY` | *(64-hex secret)* | Cryptographic application key (see `credentials_production_env.txt`) |
+| `PORTAL_CSRF_SECRET` | *(64-hex secret)* | CSRF token secret (see `credentials_production_env.txt`) |
+| `API_ENABLED` | `0` | Disables REST API endpoints until Flutter/client rollout (returns 404) |
+| `TZ` | `Asia/Karachi` | Default display timezone (PKT, UTC+5) |
+
+---
+
+## 2. Pre-Migration Live Database Backup
+
+Before applying code changes or executing migrations, download a full snapshot of the live database from Railway to your local machine:
+
 ```bash
-railway ssh "mkdir -p /data/backups && cp /data/portal.sqlite /data/backups/live_backup_\$(date +%Y%m%d_%H%M%S).sqlite"
-```
-If `/data/portal.sqlite` does NOT exist yet, initialize it from the verified baseline:
-```bash
-railway ssh "cp /app/portal/app/portal.sqlite /data/portal.sqlite && chmod 664 /data/portal.sqlite"
+# Option A: Direct cat via Railway SSH
+railway ssh "cat /data/portal.sqlite" > portal_railway_backup_$(date +%Y%m%d_%H%M%S).sqlite
+
+# Option B: Run a backup command inside the container
+railway run cp /data/portal.sqlite /data/backups/pre_migration_backup_$(date +%Y%m%d_%H%M%S).sqlite
 ```
 
-### Step 4.2: Execute Migrations inside Railway Container
-Run the automated migration runner:
+Verify that the downloaded file is non-empty and valid SQLite:
 ```bash
-railway ssh "php /app/portal/app/migrate.php"
+sqlite3 portal_railway_backup_*.sqlite "PRAGMA integrity_check;"
+# Output must be: ok
 ```
-Verify the output:
-- `Migration 001_phase1_roles_and_settings`: Completed
-- `Migration 002_phase1_role_mapping`: Completed
-- `Migration 003_phase2_student_model`: Completed
-- `Migration 004_add_pending_since`: Completed
-- `Migration 005_legacy_flag_and_utc_timestamps`: Completed
+
+---
+
+## 3. Code Deployment
+
+Deploy the repository to Railway:
+```bash
+# Push latest verified code to your production git branch
+git push origin main
+```
+Railway will automatically trigger a build using the project `Dockerfile` and startup script `start-railway.sh`.
+
+---
+
+## 4. Running Migrations on Railway
+
+Once the container is healthy and running, execute the migration runner via Railway CLI:
+
+### Step 4.1: Dry-Run / Status Inspection
+Connect to the Railway container shell or execute:
+```bash
+railway run php portal/app/migrate.php
+```
+
+The runner performs the following automatic safety operations:
+1. **Automated Snapshot:** Copies `/data/portal.sqlite` to `/data/backups/portal_<timestamp>.sqlite` before every single migration file.
+2. **Transaction Isolation:** Disables foreign keys temporarily, begins an immediate exclusive transaction, applies the migration, commits, and enables foreign keys.
+3. **Safety Invariants:** Verifies row counts in `students`, `users`, `student_documents`, and `activity_log`. Aborts and rolls back if any core table loses rows.
+4. **Foreign Key Integrity Check:** Executes `PRAGMA foreign_key_check`. If any violation occurs, the migration fails and rolls back.
+5. **Notification Suppression:** Sets `$GLOBALS['MIGRATION_RUNNING'] = true` to prevent alert emails/notifications during historical backfill.
+
+### Step 4.2: Output Verification
+Ensure the console prints:
+- `Migration 001_phase1_roles_and_settings`: Completed (super_admin created, triggers active).
+- `Migration 002_phase1_role_mapping`: Completed (officers mapped to processing_staff, pms_lead assigned).
+- `Migration 003_phase2_student_model`: Completed (counselor variants mapped, remarks backfilled).
+- `Migration 004_add_pending_since`: Completed (`pending_since` column and index created).
+- `Migration 005_legacy_flag_and_utc_timestamps`: Completed (`is_legacy = 1` set for all 265 legacy rows).
 - `PRAGMA foreign_key_check: OK (0 errors)`
 
-### Step 4.3: Verify Production Database Integrity
-```bash
-railway ssh "sqlite3 /data/portal.sqlite 'PRAGMA integrity_check;'"
-# Expected output: ok
+---
 
-railway ssh "sqlite3 /data/portal.sqlite 'SELECT COUNT(*) FROM students; SELECT COUNT(*) FROM student_documents; SELECT COUNT(*) FROM users;'"
-# Expected output: 265 | 3180 | 291
+## 5. Post-Migration Credential Distribution
+
+To generate temporary passwords for the 19 counselor accounts without leaking passwords in console logs:
+
+```bash
+railway run php portal/app/cli_generate_production_credentials.php
 ```
 
-### Step 4.4: Generate Staff & Counselor Credentials
-Generate random 12-character passwords for the 19 counselor accounts directly on Railway:
-```bash
-railway ssh "php /app/portal/app/cli_generate_production_credentials.php"
-```
-Read the generated file securely via SSH:
+Output:
+- Updates bcrypt password hashes directly in `/data/portal.sqlite`.
+- Writes formatted credentials to `/data/credentials_<date>.txt` with permissions `0600`.
+- Printout shows: `Accounts updated: 19`, `Output file: /data/credentials_<date>.txt`.
+
+To read the credentials securely:
 ```bash
 railway ssh "cat /data/credentials_*.txt"
-```
-*Distribute credentials to counselors, then delete the file:*
-```bash
+# Distribute to counselors, then delete:
 railway ssh "rm -f /data/credentials_*.txt"
 ```
 
 ---
 
-## 5. Switch Live Traffic: Merge to Main & Deploy
+## 6. Super Admin Emergency Recovery
 
-Now that Railway has the live, persistent, migrated database on `/data`, enable the redirect from Vercel to Railway.
-
-### Step 5.1: Confirm Vercel Redirect (`api/index.php`)
-In [`api/index.php`](file:///c:/Users/hafiz/Downloads/processing-portal%20(1)/api/index.php), verify that requests originating from Vercel are redirected to Railway:
-- GET requests: `302 Found`
-- POST / API requests: `307 Temporary Redirect` (preserves method and body)
-
-### Step 5.2: Commit and Merge to `main`
+If the super_admin password is ever lost or locked out, recover it via CLI without database surgery:
 ```bash
-# Ensure you are on the upgrade branch
-git status
-
-# Commit any remaining files
-git add api/index.php DEPLOY_RUNBOOK.md HANDOVER.md portal/ start-railway.sh
-git commit -m "feat: complete phases 1-6 production upgrade with Vercel redirect and persistent Railway storage"
-
-# Merge and push to main
-git checkout main
-git merge upgrade-branch
-git push origin main
+railway run php portal/app/cli_reset_super_admin.php "YourNewSecurePassword123!"
 ```
-
-Both platforms will build:
-1. **Vercel:** Deploys the redirect router. Any staff member visiting `https://processing-portal.vercel.app` is instantly redirected to `https://processing-portal-production.up.railway.app`.
-2. **Railway:** Deploys the updated application code. `start-railway.sh` boots, detects `/data/portal.sqlite` already present on the volume, and uses it without overwriting.
 
 ---
 
-## 6. Post-Deployment Verification
+## 7. Rollback Procedure
 
-1. Open `https://processing-portal.vercel.app` in an incognito window:
-   - Confirm it redirects to `https://processing-portal-production.up.railway.app`.
-2. Log in as Super Admin on Railway:
-   - Verify Super Admin Dashboard metrics.
-   - Confirm persistent volume indicator is green: `Persistent Volume (/data): Mounted & Writable`.
-   - Confirm no warning banner is displayed.
-3. Check one student record and verify all remarks and documents are intact.
+If any issue occurs during rollout:
 
----
-
-## 7. Emergency Rollback Procedure
-
-If any critical issue arises after merging to `main`:
-
-### 1. Restore Database on Railway
+1. Restore the pre-migration snapshot:
 ```bash
-railway ssh "cp /data/backups/live_backup_*.sqlite /data/portal.sqlite"
-railway ssh "sqlite3 /data/portal.sqlite 'PRAGMA integrity_check;'"
+railway ssh "cp /data/backups/pre_migration_backup_*.sqlite /data/portal.sqlite"
 ```
-
-### 2. Revert Git Main
+2. Restart the Railway service:
 ```bash
-git revert HEAD -m 1 --no-edit
-git push origin main
+railway restart
 ```
-This restores the previous commit on both Vercel and Railway.
+3. Verify integrity:
+```bash
+railway run sqlite3 /data/portal.sqlite "PRAGMA integrity_check;"
+```
