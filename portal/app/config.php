@@ -17,8 +17,17 @@ return [
     // sub-folder and links break, set it, e.g. '/portal'.
     'base_url' => '',
 
-    // Sign everyone out after this many minutes without activity.
-    'idle_minutes' => 30,
+    // Sign staff out after this many minutes without activity.
+    'idle_warning_minutes' => (int)(getenv('IDLE_WARNING_MINUTES') ?: 15),
+    'idle_logout_minutes'  => (int)(getenv('IDLE_LOGOUT_MINUTES') ?: 20),
+    'idle_minutes'         => (int)(getenv('IDLE_LOGOUT_MINUTES') ?: 20),
+
+    // Pending logic thresholds (in hours)
+    'pending_grace_hours'    => (int)(getenv('PENDING_GRACE_HOURS') !== false ? getenv('PENDING_GRACE_HOURS') : 0),
+    'pending_reminder_hours' => (int)(getenv('PENDING_REMINDER_HOURS') ?: 48),
+
+    // Secret header token for cron endpoint (X-Cron-Secret)
+    'cron_secret' => getenv('CRON_SECRET') ?: 'ptp_cron_secret_2026_x9a8b7',
 
     // Failed sign-ins allowed per 15 minutes (per username and per IP).
     'max_attempts' => 8,

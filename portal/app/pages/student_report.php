@@ -10,7 +10,7 @@ if (!in_array($format, ['pdf', 'csv'], true)) {
     exit('Invalid format. Choose pdf or csv.');
 }
 
-$isStaff = in_array($u['role'], ['admin', 'officer'], true);
+$isStaff = is_staff_role($u['role']);
 
 // Fetch student safely
 if ($u['role'] === 'student') {

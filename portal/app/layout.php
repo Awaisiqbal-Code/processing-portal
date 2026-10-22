@@ -3,8 +3,36 @@ declare(strict_types=1);
 
 function nav_items(string $role): array {
     return match ($role) {
-        'admin'   => ['admin/index.php' => 'Dashboard', 'admin/students.php' => 'Students', 'admin/officers.php' => 'Processing Officers', 'admin/reports.php' => 'Reports', 'admin/staff.php' => 'Staff and admins', 'admin/logins.php' => 'Student logins'],
-        'officer' => ['officer/index.php' => 'Dashboard', 'officer/students.php' => 'My students'],
+        'super_admin' => [
+            'admin/index.php'             => 'Dashboard',
+            'admin/students.php'          => 'Students',
+            'admin/officers.php'          => 'Processing Officers',
+            'admin/reports.php'           => 'Reports',
+            'admin/disabled_refunds.php'  => 'Disabled & Refunds',
+            'admin/consent_templates.php' => 'Consent Templates',
+            'admin/staff.php'             => 'Staff and admins',
+            'admin/roles.php'             => 'User & Role Management',
+            'admin/logins.php'            => 'Student logins',
+        ],
+        'admin' => [
+            'admin/index.php'             => 'Dashboard',
+            'admin/students.php'          => 'Students',
+            'admin/officers.php'          => 'Processing Officers',
+            'admin/reports.php'           => 'Reports',
+            'admin/disabled_refunds.php'  => 'Disabled & Refunds',
+            'admin/consent_templates.php' => 'Consent Templates',
+            'admin/staff.php'             => 'Staff and admins',
+            'admin/logins.php'            => 'Student logins',
+        ],
+        'pms_lead' => [
+            'officer/index.php'          => 'Dashboard',
+            'officer/students.php'       => 'My students',
+            'officer/reports.php'        => 'Reports',
+        ],
+        'processing_staff', 'officer', 'counselor' => [
+            'officer/index.php'          => 'Dashboard',
+            'officer/students.php'       => 'My students',
+        ],
         'student' => ['student/index.php' => 'My file'],
         default   => [],
     };
@@ -33,6 +61,19 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
     $self = ltrim(substr(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '', strlen(base_url())), '/');
     $cookieTheme = $_COOKIE['ptp_theme'] ?? '';
     $htmlThemeAttr = in_array($cookieTheme, ['light', 'dark'], true) ? ' data-theme="' . h($cookieTheme) . '"' : '';
+    $isStaff = $u && is_staff_role($u['role'] ?? null);
+    $idleWarnMin = $isStaff ? (int)setting('idle_warning_minutes', $CONFIG['idle_warning_minutes'] ?? 15) : 0;
+    $idleLogoutMin = $isStaff ? (int)setting('idle_logout_minutes', $CONFIG['idle_logout_minutes'] ?? 20) : 0;
+    $bodyAttrs = '';
+    if ($isStaff) {
+        $bodyAttrs = sprintf(
+            ' data-idle-enabled="1" data-idle-warning-minutes="%d" data-idle-logout-minutes="%d" data-ping-url="%s" data-logout-url="%s"',
+            $idleWarnMin,
+            $idleLogoutMin,
+            h(url('ping.php')),
+            h(url('index.php?idle_logout=1'))
+        );
+    }
     ?><!doctype html>
 <html lang="en"<?= $htmlThemeAttr ?>>
 <head>
@@ -46,12 +87,13 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 <link rel="stylesheet" href="<?= h(url('assets/style.css')) ?>">
 <script src="<?= h(url('assets/app.js')) ?>" defer></script>
 </head>
-<body>
+<body<?= $bodyAttrs ?>>
 <div class="wrap">
 <?php if ($u):
-    $roleBadge = ucfirst($u['role']);
-    if ($u['role'] === 'officer') {
-        $roleBadge = (($u['department'] ?? 'backend') === 'frontend') ? 'Front-End Officer' : 'Back-End Officer';
+    $roleBadge = role_label($u['role']);
+    if (in_array($u['role'], ['pms_lead', 'processing_staff', 'officer'], true)) {
+        $teamLabel = (($u['department'] ?? 'backend') === 'frontend') ? 'Front-End' : 'Back-End';
+        $roleBadge = role_label($u['role']) . ' · ' . $teamLabel;
     }
 ?>
 <header class="top">
@@ -64,18 +106,51 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
   </nav>
   <div class="who">
     <?= theme_toggle_btn() ?>
+    <?php if ($isStaff): ?>
+      <div class="notif-bell-container" style="position:relative; display:inline-flex; align-items:center;">
+        <button type="button" id="notif-bell-btn" class="btn sm ghost" aria-label="Notifications" title="Notifications" style="position:relative; padding:0.3rem 0.55rem; font-size:1.05rem; line-height:1;">
+          🔔<span id="notif-badge" class="pill bad" style="display:none; position:absolute; top:-6px; right:-6px; font-size:0.65rem; padding:0.1rem 0.35rem; font-weight:700; border-radius:10px;">0</span>
+        </button>
+        <div id="notif-dropdown" class="notif-dropdown" data-notif-url="<?= h(url('notifications.php')) ?>" data-student-base="<?= h(url(is_admin_role($u['role']) ? 'admin' : 'officer') . '/student.php?id=') ?>" style="display:none; position:absolute; right:0; top:calc(100% + 8px); width:340px; background:var(--surface); border:1.5px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.18); z-index:1000; overflow:hidden;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:0.6rem 0.85rem; border-bottom:1px solid var(--border); background:var(--sunk);">
+            <b style="font-size:0.88rem;">Notifications</b>
+            <button type="button" id="notif-mark-all" class="btn sm" style="font-size:0.72rem; padding:0.15rem 0.45rem;">Mark all read</button>
+          </div>
+          <div id="notif-list" style="max-height:360px; overflow-y:auto; padding:0.3rem 0;">
+            <div class="empty" style="padding:1rem; font-size:0.85rem;">No notifications.</div>
+          </div>
+        </div>
+      </div>
+    <?php endif; ?>
     <span class="role"><?= h($roleBadge) ?></span>
     <b><?= h($u['name']) ?></b>
     <a class="btn sm ghost" href="<?= h(url('index.php?switch=1')) ?>">Switch account</a>
     <form method="post" action="<?= h(url('logout.php')) ?>"><?= csrf_field() ?><input type="hidden" name="role" value="<?= h($u['role']) ?>"><input type="hidden" name="portal" value="<?= h($u['role']) ?>"><button class="btn sm ghost" type="submit">Sign out</button></form>
   </div>
 </header>
+<?php if ($isStaff): ?>
+<div id="idle-warning-modal" class="idle-modal-backdrop" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="idle-modal-title">
+  <div class="idle-modal-card">
+    <h2 id="idle-modal-title">Session Inactivity Warning</h2>
+    <p id="idle-modal-message">You will be logged out in <b id="idle-countdown">60</b> seconds due to inactivity.</p>
+    <div class="idle-modal-actions">
+      <button type="button" id="idle-stay-btn" class="btn primary">Stay logged in</button>
+      <a href="<?= h(url('index.php?idle_logout=1')) ?>" class="btn ghost">Sign out now</a>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 <?php else: ?>
 <div class="guest-topbar">
   <?= theme_toggle_btn() ?>
 </div>
 <?php endif; ?>
 <main>
+<?php if (!empty($GLOBALS['RAILWAY_VOLUME_MISSING'])): ?>
+  <div class="flash bad" style="font-weight:600; font-size:15px; border-width:2px; margin-bottom:15px;" role="alert">
+    ⚠️ CRITICAL: Railway persistent volume (/data) is NOT mounted or writable! All database writes are disabled to protect against data loss. Attach a persistent volume to /data in Railway service settings.
+  </div>
+<?php endif; ?>
 <?php foreach (take_flash() as [$type, $msg]): ?>
   <div class="flash <?= h($type) ?>" role="status"><?= h($msg) ?></div>
 <?php endforeach;

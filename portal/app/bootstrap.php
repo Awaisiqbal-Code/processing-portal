@@ -13,10 +13,32 @@ if (is_file(APP . '/config.local.php')) {
     $CONFIG = array_merge($CONFIG, require APP . '/config.local.php');
 }
 
-date_default_timezone_set($CONFIG['timezone'] ?? 'UTC');
+date_default_timezone_set($CONFIG['timezone'] ?? 'Asia/Karachi');
 error_reporting(E_ALL);
 ini_set('display_errors', !empty($CONFIG['debug']) ? '1' : '0');
 ini_set('log_errors', '1');
+
+// ---------- Production Condition 1 & 3: Railway Persistent Volume Check ----------
+$isRailwayEnv = (bool)(getenv('RAILWAY_ENVIRONMENT') || getenv('RAILWAY_PROJECT_ID'));
+$railwayVolumeDir = getenv('RAILWAY_VOLUME_MOUNT_PATH') ?: '/data';
+$GLOBALS['RAILWAY_VOLUME_MISSING'] = false;
+
+if ($isRailwayEnv) {
+    if (!is_dir($railwayVolumeDir) || !is_writable($railwayVolumeDir)) {
+        $GLOBALS['RAILWAY_VOLUME_MISSING'] = true;
+        // Block non-GET write requests in production when volume is missing
+        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+        if ($method !== 'GET' && php_sapi_name() !== 'cli') {
+            http_response_code(503);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'ok' => false,
+                'error' => 'Railway persistent volume /data is not mounted or writable. Writes are disabled to prevent data loss.'
+            ]);
+            exit;
+        }
+    }
+}
 
 // ---------- security headers ----------
 if (!headers_sent()) {
@@ -81,9 +103,23 @@ if (!empty($_COOKIE['PTPSESSDATA'])) {
     if (count($parts) === 2 && hash_equals(hash_hmac('sha256', $parts[0], PTP_COOKIE_SECRET), $parts[1])) {
         $decoded = json_decode((string)base64_decode($parts[0], true), true);
         if (is_array($decoded)) {
-            foreach (['auth', 'last_login_role', 'csrf', 'flash'] as $k) {
+            foreach (['auth', 'last_login_role', 'csrf', 'flash', 'last', 'staff_last_active'] as $k) {
                 if (empty($_SESSION[$k]) && isset($decoded[$k])) {
                     $_SESSION[$k] = $decoded[$k];
+                }
+            }
+            // Inactivity check on restored cookie session for staff roles (Fix 6)
+            $staffRoles = ['super_admin', 'admin', 'pms_lead', 'processing_staff', 'officer', 'counselor'];
+            $idleTimeoutSec = 20 * 60; // 20 minutes
+            $now = time();
+            foreach ($staffRoles as $sr) {
+                if (!empty($_SESSION['auth'][$sr])) {
+                    $lastActive = $_SESSION['last'][$sr] ?? $_SESSION['staff_last_active'] ?? 0;
+                    if ($lastActive > 0 && ($now - $lastActive) >= $idleTimeoutSec) {
+                        unset($_SESSION['auth'][$sr]);
+                        unset($_SESSION['last'][$sr]);
+                        $_SESSION['idle_logged_out'] = true;
+                    }
                 }
             }
         }
@@ -93,10 +129,12 @@ if (!empty($_COOKIE['PTPSESSDATA'])) {
 register_shutdown_function(function () use ($https): void {
     if (!headers_sent()) {
         $payload = [
-            'auth'            => $_SESSION['auth'] ?? [],
-            'last_login_role' => $_SESSION['last_login_role'] ?? null,
-            'csrf'            => $_SESSION['csrf'] ?? null,
-            'flash'           => $_SESSION['flash'] ?? [],
+            'auth'              => $_SESSION['auth'] ?? [],
+            'last_login_role'   => $_SESSION['last_login_role'] ?? null,
+            'csrf'              => $_SESSION['csrf'] ?? null,
+            'flash'             => $_SESSION['flash'] ?? [],
+            'last'              => $_SESSION['last'] ?? [],
+            'staff_last_active' => $_SESSION['staff_last_active'] ?? null,
         ];
         $b64 = base64_encode((string)json_encode($payload));
         $sig = hash_hmac('sha256', $b64, PTP_COOKIE_SECRET);
@@ -114,3 +152,4 @@ require APP . '/db.php';
 require APP . '/helpers.php';
 require APP . '/stages.php';
 require APP . '/auth.php';
+require APP . '/services.php';

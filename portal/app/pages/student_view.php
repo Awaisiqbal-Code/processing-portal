@@ -40,14 +40,14 @@ else $head = ['File complete', ''];
 $upcoming = array_values(array_filter(due_list([$r]), fn($d) => $d['date'] >= today()));
 
 $portalLabel = $preview ? PORTALS[$u['role']]['label'] : PORTALS['student']['label'];
-$base = ($preview && $u['role'] === 'admin') ? 'admin' : (($preview && $u['role'] === 'officer') ? 'officer' : 'student');
-$reportBase = $preview ? ($u['role'] === 'admin' ? 'admin' : 'officer') : 'student';
+$base = ($preview && is_admin_role($u['role'])) ? 'admin' : (($preview && is_officer_role($u['role'])) ? 'officer' : 'student');
+$reportBase = $preview ? (is_admin_role($u['role']) ? 'admin' : 'officer') : 'student';
 $idParam = $preview ? '&id=' . $sid : '';
 $driveUrl = safe_link($r['drive_link'] ?? null);
 $hasMeeting = student_has_meeting($r);
 $meetingUrl = url('meeting.php?id=' . (int)$sid);
 
-$isStaff = ($preview || $u['role'] === 'admin' || $u['role'] === 'officer');
+$isStaff = ($preview || is_staff_role($u['role']));
 $isStudent = !$isStaff;
 
 // Compute pending required documents for banner notification
@@ -62,9 +62,9 @@ $pendingCount = count($pendingDocsList);
 page_start($preview ? 'Student progress view' : 'My file', $u, $portalLabel);
 if ($preview): ?>
 <div class="flash warn" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem; margin-bottom: 1rem;">
-  <div><b><?= h(ucfirst($u['role'])) ?> Access:</b> Viewing live student portal for <b><?= h($r['name']) ?></b>.</div>
+  <div><b><?= h(role_label($u['role'])) ?> Access:</b> Viewing live student portal for <b><?= h($r['name']) ?></b>.</div>
   <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-    <?php if ($u['role'] === 'admin' && !empty($r['officer_id'])): ?>
+    <?php if (is_admin_role($u['role']) && !empty($r['officer_id'])): ?>
       <a class="btn sm" href="<?= h(url('admin/officers.php?id=' . $r['officer_id'])) ?>">← <?= h($r['officer_name'] ?: 'Officer') ?>'s Workspace</a>
     <?php endif; ?>
     <a class="btn sm" href="<?= h(url($base . '/student.php?id=' . $sid)) ?>">Edit student record</a>

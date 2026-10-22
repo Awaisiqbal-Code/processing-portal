@@ -5,6 +5,9 @@ database_copy.zip
 database_for_bot_training/
 database_for_bot_training.zip
 scratch/
+backups/
+storage_secure/
+portal/storage_secure/
 *.xlsx
 *.docx
 ~$*
@@ -12,6 +15,11 @@ Central_Database_Integration_Questionnaire_Filled.pdf
 portal/app/portal.sqlite.bak_before_sheet_import
 portal/app/__pycache__/
 portal/uploads/cache/*
+
+# Exclude all generated credentials files (never commit credentials to git)
+credentials_*.txt
+*credentials*.txt
+*.secret
 
 # Explicitly INCLUDE the active SQLite database for Private GitHub -> Railway deployment
 !portal/app/portal.sqlite

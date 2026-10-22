@@ -22,9 +22,10 @@ if ($u['role'] === 'student') {
         exit('Access denied.');
     }
     $s = q("SELECT * FROM students WHERE id = ?", [$studentId])->fetch();
-} elseif ($u['role'] === 'officer') {
-    $s = q("SELECT * FROM students WHERE id = ? AND (officer_id = ? OR frontend_officer_id = ?)", [$studentId, $u['id'], $u['id']])->fetch();
-} elseif ($u['role'] === 'admin') {
+} elseif (is_officer_role($u['role'])) {
+    [$w, $p] = scope_sql($u, 'students');
+    $s = q("SELECT * FROM students WHERE id = ? AND $w", array_merge([$studentId], $p))->fetch();
+} elseif (is_admin_role($u['role'])) {
     $s = q("SELECT * FROM students WHERE id = ?", [$studentId])->fetch();
 } else {
     $s = null;
@@ -38,7 +39,7 @@ if (!$s) {
 // Handle staff updating meeting link directly
 if (is_post() && post('action') === 'save_meeting') {
     csrf_check();
-    if ($u['role'] !== 'admin' && $u['role'] !== 'officer') {
+    if (!is_staff_role($u['role'])) {
         http_response_code(403);
         exit('Access denied.');
     }
@@ -134,7 +135,7 @@ page_start('Recorded Meeting — ' . $s['name'], $u, PORTALS[$u['role']]['label'
     No separate Zoom recording or meeting video has been uploaded for <b><?= h($s['name']) ?></b> yet.
   </p>
 
-  <?php if ($u['role'] === 'admin' || $u['role'] === 'officer'): ?>
+  <?php if (is_staff_role($u['role'])): ?>
     <div style="margin: 1.5rem 0; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; padding: 1.25rem; text-align: left;">
       <h3 style="margin: 0 0 0.35rem 0; font-size: 0.95rem;">Attach Meeting Video / Zoom Link:</h3>
       <p class="small muted" style="margin: 0 0 0.75rem 0;">Paste the Google Drive video link or Zoom cloud recording URL:</p>

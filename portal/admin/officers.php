@@ -6,7 +6,7 @@ require APP . '/layout.php';
 $u = require_role('admin');
 
 // Fetch all processing officers (both Frontend and Backend)
-$officers = q("SELECT id, name, username, active, last_login, COALESCE(department, 'backend') AS department FROM users WHERE role = 'officer' ORDER BY department DESC, name ASC")->fetchAll();
+$officers = q("SELECT id, name, username, active, last_login, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') ORDER BY department DESC, name ASC")->fetchAll();
 
 // Determine selected officer
 $rawParam = get('id');

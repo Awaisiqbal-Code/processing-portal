@@ -1,11 +1,14 @@
-# Ignore backup copies, spreadsheets, and temporary folders during Railway deployment
-# IMPORTANT: portal/app/portal.sqlite is intentionally INCLUDED so your existing database is preserved.
+# Ignore backup copies, spreadsheets, temporary folders, and credentials during Railway deployment
+# Note: In production Railway mounts /data persistent volume for portal.sqlite and uploads
 database/
 database_copy/
 database_copy.zip
 database_for_bot_training/
 database_for_bot_training.zip
 scratch/
+backups/
+storage_secure/
+portal/storage_secure/
 *.xlsx
 *.docx
 ~$*
@@ -14,3 +17,7 @@ portal/app/portal.sqlite.bak_before_sheet_import
 portal/app/__pycache__/
 portal/uploads/cache/*
 .git/
+.env*
+credentials_*.txt
+*credentials*.txt
+*.secret

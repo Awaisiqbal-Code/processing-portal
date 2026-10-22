@@ -30,9 +30,10 @@ if ($u['role'] === 'student') {
         exit('Access denied.');
     }
     $s = q("SELECT s.*, u.name AS officer_name FROM students s LEFT JOIN users u ON u.id = s.officer_id WHERE s.id = ?", [$studentId])->fetch();
-} elseif ($u['role'] === 'officer') {
-    $s = q("SELECT s.*, u.name AS officer_name FROM students s LEFT JOIN users u ON u.id = s.officer_id WHERE s.id = ? AND (s.officer_id = ? OR s.frontend_officer_id = ?)", [$studentId, $u['id'], $u['id']])->fetch();
-} elseif ($u['role'] === 'admin') {
+} elseif (is_officer_role($u['role'])) {
+    [$w, $p] = scope_sql($u, 's');
+    $s = q("SELECT s.*, u.name AS officer_name FROM students s LEFT JOIN users u ON u.id = s.officer_id WHERE s.id = ? AND $w", array_merge([$studentId], $p))->fetch();
+} elseif (is_admin_role($u['role'])) {
     $s = q("SELECT s.*, u.name AS officer_name FROM students s LEFT JOIN users u ON u.id = s.officer_id WHERE s.id = ?", [$studentId])->fetch();
 } else {
     $s = null;

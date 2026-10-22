@@ -37,13 +37,14 @@ if ($u['role'] === 'student') {
         http_response_code(403);
         exit('Access denied.');
     }
-} elseif ($u['role'] === 'officer') {
-    $allowed = q("SELECT id FROM students WHERE id = ? AND (officer_id = ? OR frontend_officer_id = ?)", [$studentId, $u['id'], $u['id']])->fetchColumn();
+} elseif (is_officer_role($u['role'])) {
+    [$w, $p] = scope_sql($u, 'students');
+    $allowed = q("SELECT id FROM students WHERE id = ? AND $w", array_merge([$studentId], $p))->fetchColumn();
     if (!$allowed) {
         http_response_code(403);
         exit('Access denied.');
     }
-} elseif ($u['role'] !== 'admin') {
+} elseif (!is_admin_role($u['role'])) {
     http_response_code(403);
     exit('Access denied.');
 }

@@ -103,6 +103,85 @@ function log_action(string $action, ?int $studentId = null): void {
       [current_user()['id'] ?? null, $studentId, mb_substr($action, 0, 255), client_ip(), now()]);
 }
 
+/**
+ * Reads a tunable setting from the `settings` table, falling back to environment variables or $CONFIG.
+ */
+function setting(string $key, mixed $default = null, bool $reload = false): mixed {
+    static $cache = null;
+    if ($cache === null || $reload) {
+        $cache = [];
+        try {
+            $hasTable = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'")->fetchColumn();
+            if ($hasTable) {
+                foreach (q('SELECT key, value FROM settings') as $r) {
+                    $cache[$r['key']] = $r['value'];
+                }
+            }
+        } catch (Throwable) {
+            // Ignore if settings table is not migrated yet
+        }
+    }
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    $env = getenv($key);
+    if ($env !== false && $env !== '') {
+        return $env;
+    }
+    global $CONFIG;
+    $lowerKey = strtolower($key);
+    return $CONFIG[$lowerKey] ?? $default;
+}
+
+function set_setting(string $key, mixed $value): void {
+    $now = now();
+    q("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", [
+        $key,
+        (string)$value,
+        $now,
+    ]);
+    setting($key, null, true);
+}
+
+/**
+ * Structured audit logger for `activity_logs` (Phase 1 & Phase 2.3).
+ */
+function log_activity(string $entityType, ?int $entityId, string $action, ?array $oldValues = null, ?array $newValues = null, ?int $userId = null): void {
+    try {
+        $hasTable = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='activity_logs'")->fetchColumn();
+        if (!$hasTable) return;
+        $uid = $userId ?? (current_user()['id'] ?? null);
+        q('INSERT INTO activity_logs (user_id, entity_type, entity_id, action, old_values, new_values, created_at) VALUES (?,?,?,?,?,?,?)', [
+            $uid ? (int)$uid : null,
+            $entityType,
+            $entityId,
+            $action,
+            $oldValues !== null ? json_encode($oldValues, JSON_UNESCAPED_UNICODE) : null,
+            $newValues !== null ? json_encode($newValues, JSON_UNESCAPED_UNICODE) : null,
+            now(),
+        ]);
+    } catch (Throwable $e) {
+        error_log('log_activity error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Checks whether a Railway Persistent Volume is mounted and active.
+ */
+function railway_volume_status(): array {
+    $volPath = getenv('RAILWAY_VOLUME_MOUNT_PATH') ?: (is_dir('/data') ? '/data' : '');
+    $dbPath = getenv('PORTAL_SQLITE') ?: (APP . '/portal.sqlite');
+    $dataSqliteExists = is_file('/data/portal.sqlite');
+    $isMounted = ($volPath !== '' && is_dir($volPath) && is_writable($volPath));
+    return [
+        'volume_mount_path' => $volPath ?: null,
+        'is_mounted'        => $isMounted,
+        'data_sqlite_exists'=> $dataSqliteExists,
+        'active_db_path'    => $dbPath,
+        'backup_dir'        => ($isMounted ? rtrim($volPath, '/\\') . '/backups' : dirname(ROOT) . '/backups'),
+    ];
+}
+
 function make_username(string $name): string {
     $p = preg_split('/\s+/', strtolower(preg_replace('/[^a-zA-Z ]/', '', $name)), -1, PREG_SPLIT_NO_EMPTY);
     $base = ($p[0] ?? 'student') . '.' . ($p[1] ?? 'student');

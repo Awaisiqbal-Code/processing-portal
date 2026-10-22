@@ -55,7 +55,7 @@ const FIELD_GROUPS = [
         'visa'                => ['Visa status', 'select', ['', 'Pending', 'Granted', 'Refused']],
         'last_installment'    => ['Last installment received', 'yn'],
         'threat_cancellation' => ['Threatening cancellation / refund', 'text'],
-        'remarks'             => ['Remarks', 'textarea'],
+        'remarks'             => ['Latest Remark (Read-only)', 'readonly_textarea'],
     ],
 ];
 

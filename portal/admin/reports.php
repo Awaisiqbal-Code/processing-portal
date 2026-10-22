@@ -1,13 +1,369 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/../app/bootstrap.php';
-require APP . '/layout.php';
-require APP . '/reports.php';
+require_once __DIR__ . '/../app/bootstrap.php';
+require_once APP . '/layout.php';
+require_once APP . '/reports.php';
+require_once APP . '/reporting_service.php';
 
 $u = require_role('admin');
 
-// 1. Month and Year Filtering
+$viewTab = get('tab') ?: 'operations';
+$today = date('Y-m-d');
+
+if ($viewTab === 'operations') {
+    // -------------------------------------------------------------
+    // Operations & Performance Report (Phase 5)
+    // -------------------------------------------------------------
+    $preset = get('preset') ?: '';
+    if ($preset === 'today') {
+        $startDate = $today;
+        $endDate = $today;
+    } elseif ($preset === 'week') {
+        $startDate = date('Y-m-d', strtotime('monday this week'));
+        $endDate = $today;
+    } elseif ($preset === 'month') {
+        $startDate = date('Y-m-01');
+        $endDate = $today;
+    } elseif ($preset === 'all') {
+        $startDate = '2020-01-01';
+        $endDate = $today;
+    } else {
+        $startDate = get('start_date') ?: $today;
+        $endDate = get('end_date') ?: $today;
+    }
+
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) $startDate = $today;
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) $endDate = $today;
+    if ($startDate > $endDate) $startDate = $endDate;
+
+    $summary = get_reporting_summary($u, $startDate, $endDate);
+    $breakdowns = get_staff_and_counselor_breakdown();
+
+    // Handle Downloads
+    $download = strtolower(get('download') ?: '');
+    if ($download === 'xlsx') {
+        export_reporting_xlsx($summary, $breakdowns, 'Operations_Report_' . date('Ymd_His') . '.xlsx');
+    }
+
+    if ($download === 'pdf') {
+        $pdfData = generate_reporting_pdf($summary, $breakdowns, 'Administrative Caseload & Staff Performance Report');
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="Admin_Operations_Report_' . date('Ymd_His') . '.pdf"');
+        header('Content-Length: ' . (string)strlen($pdfData));
+        header('Cache-Control: private, no-cache, must-revalidate');
+        header('Pragma: private');
+        echo $pdfData;
+        exit;
+    }
+
+    page_start('Operations & Analytics Report', $u, PORTALS[$u['role']]['label']);
+    ?>
+
+    <div class="panel-h" style="margin-bottom:1.25rem;">
+      <div>
+        <h1>Executive Operations &amp; Performance Report</h1>
+        <p>Comprehensive system oversight, staff allocation, counselor caseload, and pipeline monitoring (Timezone: Asia/Karachi PKT).</p>
+      </div>
+      <div class="row-actions">
+        <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=operations&start_date=' . urlencode($startDate) . '&end_date=' . urlencode($endDate) . '&download=xlsx')) ?>">⬇ Export Excel (.xlsx)</a>
+        <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=operations&start_date=' . urlencode($startDate) . '&end_date=' . urlencode($endDate) . '&download=pdf')) ?>" target="_blank">⬇ Export PDF (.pdf)</a>
+      </div>
+    </div>
+
+    <!-- Navigation Sub-Tabs -->
+    <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
+      <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
+      <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
+      <a class="btn sm ghost" href="<?= h(url('admin/disabled_refunds.php')) ?>">Disabled &amp; Refunds Audit &rarr;</a>
+    </div>
+
+    <!-- Date Filter Bar -->
+    <section class="panel" style="margin-bottom:1.5rem; padding:1rem 1.25rem;">
+      <form method="get" action="<?= h(url('admin/reports.php')) ?>" style="display:flex; flex-wrap:wrap; gap:1rem; align-items:flex-end;">
+        <input type="hidden" name="tab" value="operations">
+        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+          <label for="start_date" style="font-size:0.8rem; font-weight:600; color:var(--muted);">Start Date</label>
+          <input type="date" id="start_date" name="start_date" value="<?= h($startDate) ?>" class="input" style="padding:0.4rem 0.65rem;">
+        </div>
+        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+          <label for="end_date" style="font-size:0.8rem; font-weight:600; color:var(--muted);">End Date</label>
+          <input type="date" id="end_date" name="end_date" value="<?= h($endDate) ?>" class="input" style="padding:0.4rem 0.65rem;">
+        </div>
+        <div>
+          <button type="submit" class="btn primary" style="padding:0.45rem 1rem;">Apply Filter</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.35rem; margin-left:auto; font-size:0.82rem;">
+          <span style="color:var(--muted); margin-right:0.25rem;">Quick Presets:</span>
+          <a class="btn sm <?= ($startDate === $today && $endDate === $today) ? 'primary' : 'ghost' ?>" href="<?= h(url('admin/reports.php?tab=operations&preset=today')) ?>">Today</a>
+          <a class="btn sm <?= $preset === 'week' ? 'primary' : 'ghost' ?>" href="<?= h(url('admin/reports.php?tab=operations&preset=week')) ?>">This Week</a>
+          <a class="btn sm <?= $preset === 'month' ? 'primary' : 'ghost' ?>" href="<?= h(url('admin/reports.php?tab=operations&preset=month')) ?>">This Month</a>
+          <a class="btn sm <?= $preset === 'all' ? 'primary' : 'ghost' ?>" href="<?= h(url('admin/reports.php?tab=operations&preset=all')) ?>">All Time</a>
+        </div>
+      </form>
+    </section>
+
+    <!-- Core KPI Cards -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+      <!-- New Students in Period -->
+      <div class="panel" style="padding:1.15rem;">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em;">New Registrations (Period)</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--text); margin:0.35rem 0;"><?= $summary['new_students'] ?></div>
+        <div style="font-size:0.82rem; color:var(--muted);">
+          <span class="pill sm">BS: <?= $summary['new_bs'] ?></span>
+          <span class="pill sm" style="margin-left:0.25rem;">MS: <?= $summary['new_ms'] ?></span>
+          <span style="font-size:0.75rem; margin-left:0.35rem; color:var(--muted);">(Created <?= h($startDate) ?> to <?= h($endDate) ?>)</span>
+        </div>
+      </div>
+
+      <!-- Total Caseload Scope -->
+      <div class="panel" style="padding:1.15rem;">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em;">Total System Caseload</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--text); margin:0.35rem 0;"><?= $summary['total_caseload'] ?></div>
+        <div style="font-size:0.82rem; display:flex; gap:0.35rem; flex-wrap:wrap;">
+          <span class="pill sm ok">Active: <?= $summary['active_count'] ?></span>
+          <span class="pill sm">Inactive: <?= $summary['inactive_count'] ?></span>
+          <span class="pill sm bad">Disabled: <?= $summary['disabled_count'] ?></span>
+        </div>
+      </div>
+
+      <!-- CSC Verification Status -->
+      <div class="panel" style="padding:1.15rem;">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em;">CSC Verification</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--text); margin:0.35rem 0;"><?= $summary['verified_count'] ?> <span style="font-size:1rem; font-weight:400; color:var(--muted);">/ <?= $summary['total_caseload'] ?></span></div>
+        <div style="font-size:0.82rem; color:var(--muted);">
+          <span class="pill sm ok">Verified: <?= $summary['verified_count'] ?></span>
+          <span class="pill sm warn" style="margin-left:0.25rem;">Unverified: <?= $summary['unverified_count'] ?></span>
+        </div>
+      </div>
+
+      <!-- Pending Review Attention -->
+      <div class="panel" style="padding:1.15rem; border-left:4px solid var(--bad, #ef4444);">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--bad, #ef4444); text-transform:uppercase; letter-spacing:0.04em;">Action: Pending Attention</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--bad, #ef4444); margin:0.35rem 0;"><?= $summary['pending_count'] ?></div>
+        <div style="font-size:0.82rem;">
+          <a href="<?= h(url('admin/students.php?pending=1')) ?>" style="font-weight:600; color:var(--bad, #ef4444); text-decoration:underline;">
+            Review <?= $summary['pending_count'] ?> pending files &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Incomplete Profiles -->
+      <div class="panel" style="padding:1.15rem;">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em;">Incomplete Profiles</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--text); margin:0.35rem 0;"><?= $summary['incomplete_count'] ?></div>
+        <div style="font-size:0.82rem;">
+          <a href="<?= h(url('admin/students.php?incomplete=1')) ?>" style="color:var(--muted); text-decoration:underline;">
+            Missing country or degree level &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Refunded Count -->
+      <div class="panel" style="padding:1.15rem;">
+        <div style="font-size:0.82rem; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em;">Refund Processed</div>
+        <div style="font-size:2rem; font-weight:700; color:var(--text); margin:0.35rem 0;"><?= $summary['refunded_count'] ?></div>
+        <div style="font-size:0.82rem; color:var(--muted);">
+          <a href="<?= h(url('admin/disabled_refunds.php?tab=refunds')) ?>" style="color:var(--text); text-decoration:underline;">
+            View refund audit log &rarr;
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Country Distribution Table -->
+    <section class="panel" style="margin-bottom:1.5rem;">
+      <div class="panel-h">
+        <h2>Country-wise Caseload Distribution</h2>
+        <p>Breakdown of students by study destination, degree level, and pending review flags.</p>
+      </div>
+
+      <?php if (empty($summary['country_stats'])): ?>
+        <div class="empty">No student records found in current scope.</div>
+      <?php else: ?>
+        <div class="tbl"><table>
+          <thead>
+            <tr>
+              <th>Country Destination</th>
+              <th style="text-align:center;">Total Students</th>
+              <th style="text-align:center;">BS Program</th>
+              <th style="text-align:center;">MS Program</th>
+              <th style="text-align:center;">Pending Attention</th>
+              <th style="text-align:right;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($summary['country_stats'] as $cs): ?>
+              <tr>
+                <td>
+                  <b><?= h($cs['country_name']) ?></b>
+                  <?php if ($cs['country_name'] === 'Unassigned / Incomplete'): ?>
+                    <span class="pill sm bad" style="margin-left:0.35rem;">Incomplete</span>
+                  <?php endif; ?>
+                </td>
+                <td style="text-align:center; font-weight:600;"><?= $cs['student_count'] ?></td>
+                <td style="text-align:center;"><span class="pill sm"><?= $cs['bs_count'] ?></span></td>
+                <td style="text-align:center;"><span class="pill sm"><?= $cs['ms_count'] ?></span></td>
+                <td style="text-align:center;">
+                  <?php if ($cs['pending_count'] > 0): ?>
+                    <span class="pill sm bad"><?= $cs['pending_count'] ?> pending</span>
+                  <?php else: ?>
+                    <span style="color:var(--muted); font-size:0.85rem;">0</span>
+                  <?php endif; ?>
+                </td>
+                <td style="text-align:right;">
+                  <?php if ($cs['country_name'] !== 'Unassigned / Incomplete'): ?>
+                    <a class="btn sm ghost" href="<?= h(url('admin/students.php?country=' . urlencode($cs['country_name']))) ?>">View list &rarr;</a>
+                  <?php else: ?>
+                    <a class="btn sm ghost" href="<?= h(url('admin/students.php?incomplete=1')) ?>">Complete profiles &rarr;</a>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table></div>
+      <?php endif; ?>
+    </section>
+
+    <!-- Processing Staff Breakdown -->
+    <section class="panel" style="margin-bottom:1.5rem;">
+      <div class="panel-h">
+        <h2>Processing Staff Breakdown (Front-End &amp; Back-End)</h2>
+        <p>Assigned caseload, verification progress, milestone offers, and visa grants per staff officer.</p>
+      </div>
+
+      <?php if (empty($breakdowns['staff_stats'])): ?>
+        <div class="empty">No processing staff accounts found.</div>
+      <?php else: ?>
+        <div class="tbl"><table>
+          <thead>
+            <tr>
+              <th>Staff Member</th>
+              <th style="text-align:center;">Department</th>
+              <th style="text-align:center;">Assigned Caseload</th>
+              <th style="text-align:center;">CSC Verified</th>
+              <th style="text-align:center;">Offer Letters</th>
+              <th style="text-align:center;">Visa Grants</th>
+              <th style="text-align:center;">Pending Attention</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($breakdowns['staff_stats'] as $st): ?>
+              <tr>
+                <td><b><?= h($st['name']) ?></b></td>
+                <td style="text-align:center;">
+                  <span class="pill sm <?= ($st['department'] === 'frontend') ? 'info' : 'primary' ?>">
+                    <?= ($st['department'] === 'frontend') ? 'Front-End' : 'Back-End' ?>
+                  </span>
+                </td>
+                <td style="text-align:center; font-weight:600;"><?= $st['assigned_count'] ?></td>
+                <td style="text-align:center;"><span class="pill sm ok"><?= $st['verified_count'] ?></span></td>
+                <td style="text-align:center;"><?= $st['offer_count'] ?></td>
+                <td style="text-align:center;"><span class="pill sm ok"><?= $st['visa_granted_count'] ?></span></td>
+                <td style="text-align:center;">
+                  <?php if ($st['pending_count'] > 0): ?>
+                    <span class="pill sm bad"><?= $st['pending_count'] ?></span>
+                  <?php else: ?>
+                    <span style="color:var(--muted); font-size:0.85rem;">0</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table></div>
+      <?php endif; ?>
+    </section>
+
+    <!-- Counselor Caseload Breakdown -->
+    <section class="panel" style="margin-bottom:1.5rem;">
+      <div class="panel-h">
+        <h2>Counselor Caseload Breakdown</h2>
+        <p>Distribution of students, degree programs, and pending review cases across counselors.</p>
+      </div>
+
+      <?php if (empty($breakdowns['counselor_stats'])): ?>
+        <div class="empty">No counselor accounts found.</div>
+      <?php else: ?>
+        <div class="tbl"><table>
+          <thead>
+            <tr>
+              <th>Counselor</th>
+              <th>Username</th>
+              <th style="text-align:center;">Total Caseload</th>
+              <th style="text-align:center;">BS Program</th>
+              <th style="text-align:center;">MS Program</th>
+              <th style="text-align:center;">CSC Verified</th>
+              <th style="text-align:center;">Pending Attention</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($breakdowns['counselor_stats'] as $cs): ?>
+              <tr>
+                <td><b><?= h($cs['name']) ?></b></td>
+                <td><code><?= h($cs['username'] ?? '') ?></code></td>
+                <td style="text-align:center; font-weight:600;"><?= $cs['caseload_count'] ?></td>
+                <td style="text-align:center;"><span class="pill sm"><?= $cs['bs_count'] ?></span></td>
+                <td style="text-align:center;"><span class="pill sm"><?= $cs['ms_count'] ?></span></td>
+                <td style="text-align:center;"><span class="pill sm ok"><?= $cs['verified_count'] ?></span></td>
+                <td style="text-align:center;">
+                  <?php if ($cs['pending_count'] > 0): ?>
+                    <span class="pill sm bad"><?= $cs['pending_count'] ?></span>
+                  <?php else: ?>
+                    <span style="color:var(--muted); font-size:0.85rem;">0</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table></div>
+      <?php endif; ?>
+    </section>
+
+    <!-- PMS Lead Breakdown -->
+    <section class="panel">
+      <div class="panel-h">
+        <h2>PMS Lead Oversight</h2>
+        <p>Student supervision volume and pending escalations per PMS Lead.</p>
+      </div>
+
+      <?php if (empty($breakdowns['pms_stats'])): ?>
+        <div class="empty">No PMS Lead accounts recorded.</div>
+      <?php else: ?>
+        <div class="tbl"><table>
+          <thead>
+            <tr>
+              <th>PMS Lead</th>
+              <th style="text-align:center;">Supervised Students</th>
+              <th style="text-align:center;">Pending Attention</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($breakdowns['pms_stats'] as $pm): ?>
+              <tr>
+                <td><b><?= h($pm['name']) ?></b></td>
+                <td style="text-align:center; font-weight:600;"><?= $pm['assigned_students'] ?></td>
+                <td style="text-align:center;">
+                  <?php if ($pm['pending_count'] > 0): ?>
+                    <span class="pill sm bad"><?= $pm['pending_count'] ?> pending</span>
+                  <?php else: ?>
+                    <span style="color:var(--muted); font-size:0.85rem;">0</span>
+                  <?php endif; ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table></div>
+      <?php endif; ?>
+    </section>
+
+    <?php
+    page_end();
+    exit;
+}
+
+// -------------------------------------------------------------
+// Monthly Progress Archive (Legacy View)
+// -------------------------------------------------------------
 $currentYear = (int)date('Y');
 $currentMonth = (int)date('n');
 
@@ -26,9 +382,7 @@ $scope = get('scope') === 'active' ? 'active' : 'received';
 $startDate = sprintf('%04d-%02d-01', $year, $month);
 $endDate = date('Y-m-t', strtotime($startDate));
 
-// 2. Query matching student records
 if ($scope === 'received') {
-    // Records received/created within this month
     $sql = "SELECT s.*, o.name AS officer_name 
             FROM students s 
             LEFT JOIN users o ON o.id = s.officer_id 
@@ -37,7 +391,6 @@ if ($scope === 'received') {
             ORDER BY s.id DESC";
     $params = [$startDate, $endDate, $startDate, $endDate];
 } else {
-    // Active pipeline cases during this month
     $sql = "SELECT s.*, o.name AS officer_name 
             FROM students s 
             LEFT JOIN users o ON o.id = s.officer_id 
@@ -50,7 +403,6 @@ if ($scope === 'received') {
 
 $students = q($sql, $params)->fetchAll();
 
-// 3. Compute KPI Summary & Aggregations
 $summary = [
     'total'          => count($students),
     'granted'        => 0,
@@ -92,8 +444,7 @@ foreach ($students as $s) {
     $summary['branch_counts'][$brName] = ($summary['branch_counts'][$brName] ?? 0) + 1;
 }
 
-// 4. Handle Direct Monthly PDF / CSV Downloads
-$download = strtolower(get('download'));
+$download = strtolower(get('download') ?: '');
 if ($download === 'pdf') {
     $content = generate_monthly_pdf($year, $month, $summary, $students, $scope);
     $filename = sprintf("Monthly_Report_%04d-%02d_%s.pdf", $year, $month, $scope);
@@ -120,7 +471,6 @@ if ($download === 'pdf') {
     exit;
 }
 
-// 5. Render Admin Reports View
 $monthNames = [1 => 'January', 2 => 'February', 3 => 'March', 4 => 'April', 5 => 'May', 6 => 'June', 7 => 'July', 8 => 'August', 9 => 'September', 10 => 'October', 11 => 'November', 12 => 'December'];
 $selectedMonthName = $monthNames[$month] . ' ' . $year;
 
@@ -129,21 +479,29 @@ page_start('Monthly Reports', $u, PORTALS['admin']['label']);
 <section class="panel">
   <div class="panel-h">
     <div>
-      <h1>Monthly Reports & Analytics</h1>
-      <p>Comprehensive executive reporting, status breakdowns, and monthly PDF/CSV exports.</p>
+      <h1>Monthly Reports &amp; Analytics Archive</h1>
+      <p>Historical monthly progress tracking, stage status breakdowns, and monthly PDF/CSV exports.</p>
     </div>
     <div class="row-actions">
-      <a class="btn sm primary" href="<?= h(url("admin/reports.php?year={$year}&month={$month}&scope={$scope}&download=pdf")) ?>">
+      <a class="btn sm primary" href="<?= h(url("admin/reports.php?tab=monthly&year={$year}&month={$month}&scope={$scope}&download=pdf")) ?>">
         Download Monthly Report (PDF)
       </a>
-      <a class="btn sm" href="<?= h(url("admin/reports.php?year={$year}&month={$month}&scope={$scope}&download=csv")) ?>">
+      <a class="btn sm" href="<?= h(url("admin/reports.php?tab=monthly&year={$year}&month={$month}&scope={$scope}&download=csv")) ?>">
         Download Monthly CSV
       </a>
     </div>
   </div>
 
+  <!-- Navigation Sub-Tabs -->
+  <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
+    <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
+    <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
+    <a class="btn sm ghost" href="<?= h(url('admin/disabled_refunds.php')) ?>">Disabled &amp; Refunds Audit &rarr;</a>
+  </div>
+
   <!-- Filter Selector Form -->
   <form method="get" class="toolbar report-filter-bar">
+    <input type="hidden" name="tab" value="monthly">
     <label class="f" style="margin: 0; min-width: 140px;">
       <span class="small muted">Report Month</span>
       <select name="month" data-autosubmit>
@@ -198,121 +556,45 @@ page_start('Monthly Reports', $u, PORTALS['admin']['label']);
     <div class="report-kpi-card kpi-purple">
       <div class="report-kpi-title">Docs Checklist Done</div>
       <div class="report-kpi-val val-purple"><?= $summary['checklist_done'] ?></div>
-      <div class="report-kpi-sub"><?= $summary['consent_done'] ?> consent forms signed</div>
+      <div class="report-kpi-sub">Checklist completed</div>
     </div>
   </div>
 
-  <!-- Breakdown Sections -->
-  <div class="grid2" style="margin-bottom: 1.75rem;">
-    <!-- By Progress Stage -->
-    <div class="report-subpanel">
-      <h3 style="font-size: 0.95rem; margin-top: 0; margin-bottom: 0.75rem;">Breakdown by Progress Stage</h3>
-      <div class="tbl"><table>
-        <thead><tr><th>Stage Milestone</th><th>Count</th><th>Ratio</th></tr></thead>
-        <tbody>
-        <?php foreach (STAGES as $st): $c = $summary['stage_counts'][$st[0]] ?? 0; $pct = round(($c / max(1, $summary['total'])) * 100); ?>
-          <tr>
-            <td><?= h($st[0]) ?></td>
-            <td class="num"><b><?= $c ?></b></td>
-            <td><?= $pct ?>%</td>
-          </tr>
-        <?php endforeach; ?>
-        <?php $closed = $summary['stage_counts']['Closed'] ?? 0; ?>
-        <tr class="tr-summary">
-          <td>Closed / File Complete</td>
-          <td class="num"><?= $closed ?></td>
-          <td><?= round(($closed / max(1, $summary['total'])) * 100) ?>%</td>
+  <!-- Progress Stages Breakdown Table -->
+  <div class="tbl" style="margin-top: 1.5rem;">
+    <table>
+      <thead>
+        <tr>
+          <th>Progress Stage</th>
+          <th style="width: 140px; text-align: center;">Students in Stage</th>
+          <th style="width: 180px; text-align: center;">Pipeline %</th>
         </tr>
-        </tbody>
-      </table></div>
-    </div>
-
-    <!-- By Officer & Branch -->
-    <div class="report-subpanel">
-      <h3 style="font-size: 0.95rem; margin-top: 0; margin-bottom: 0.75rem;">Officer & Branch Workload</h3>
-      <div class="tbl"><table>
-        <thead><tr><th>Processing Officer</th><th>Cases</th><th>Branch</th><th>Cases</th></tr></thead>
-        <tbody>
+      </thead>
+      <tbody>
         <?php 
-          $offKeys = array_keys($summary['officer_counts']);
-          $brKeys = array_keys($summary['branch_counts']);
-          $maxRows = max(count($offKeys), count($brKeys));
-          for ($i = 0; $i < $maxRows; $i++):
-            $oK = $offKeys[$i] ?? '';
-            $oV = $oK !== '' ? $summary['officer_counts'][$oK] : '';
-            $bK = $brKeys[$i] ?? '';
-            $bV = $bK !== '' ? $summary['branch_counts'][$bK] : '';
+        $tot = max(1, count($students));
+        foreach (STAGES as $st): 
+          $c = $summary['stage_counts'][$st[0]] ?? 0;
+          $pct = round(($c / $tot) * 100, 1);
         ?>
           <tr>
-            <td><?= h($oK) ?></td>
-            <td class="num"><?= $oV ?></td>
-            <td><?= h($bK) ?></td>
-            <td class="num"><?= $bV ?></td>
+            <td><b><?= h($st[0]) ?></b></td>
+            <td style="text-align: center;"><span class="pill sm"><?= $c ?></span></td>
+            <td style="text-align: center; color: var(--muted);"><?= $pct ?>%</td>
           </tr>
-        <?php endfor; ?>
-        </tbody>
-      </table></div>
-    </div>
+        <?php endforeach; ?>
+        <?php 
+        $closed = $summary['stage_counts']['Closed'] ?? 0; 
+        $closedPct = round(($closed / $tot) * 100, 1);
+        ?>
+        <tr style="background: var(--sunk);">
+          <td><b>File Complete / Closed</b></td>
+          <td style="text-align: center;"><span class="pill sm ok"><?= $closed ?></span></td>
+          <td style="text-align: center; color: var(--muted);"><?= $closedPct ?>%</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
-
-  <!-- Student Records Table for the Month -->
-  <div class="panel-h" style="margin-top: 1rem;">
-    <h2>Student Records for <?= h($selectedMonthName) ?> (<?= count($students) ?>)</h2>
-  </div>
-
-  <?php if (!$students): ?>
-    <div class="empty">No student records match <?= h($selectedMonthName) ?> under scope "<?= h($scope) ?>". Try selecting another month or switching to "Active Pipeline Cases".</div>
-  <?php else: ?>
-  <div class="tbl"><table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Student</th>
-        <th>Counselor</th>
-        <th>Officer</th>
-        <th>Received</th>
-        <th>Progress</th>
-        <th>Next step</th>
-        <th>Visa</th>
-        <th>Docs, Meeting & Reports</th>
-      </tr>
-    </thead>
-    <tbody>
-    <?php foreach ($students as $s): 
-      $ns = next_stage($s); 
-      $dl = safe_link($s['drive_link'] ?? '');
-      $hasMeeting = student_has_meeting($s);
-      $ml = url('meeting.php?id=' . (int)$s['id']);
-    ?>
-      <tr>
-        <td><?= (int)$s['id'] ?></td>
-        <td><a href="<?= h(url('admin/student.php?id=' . $s['id'])) ?>"><b><?= h($s['name']) ?></b></a></td>
-        <td><?= h($s['counselor'] ?: '-') ?></td>
-        <td><?= h($s['officer_name'] ?: 'Not assigned') ?></td>
-        <td class="num"><?= h(fmt_date($s['received_date'])) ?></td>
-        <td><a href="<?= h(url('admin/progress.php?id=' . $s['id'])) ?>" title="View student progress" style="text-decoration:none; display:inline-block;"><?= progress_dots($s) ?></a></td>
-        <td><?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?></td>
-        <td><?php if ($s['visa']): ?><span class="pill <?= pill_class($s['visa']) ?>"><?= h($s['visa']) ?></span><?php endif; ?></td>
-        <td>
-          <div style="display:flex; gap:0.3rem; align-items:center; flex-wrap:wrap;">
-            <?php if ($dl): ?>
-              <a class="btn sm ghost" href="<?= h($dl) ?>" target="_blank" rel="noopener noreferrer" title="Open Student Documents Folder in Google Drive">📁 Docs</a>
-            <?php endif; ?>
-            <?php if ($hasMeeting): ?>
-              <a class="btn sm ghost" href="<?= h($ml) ?>" target="_blank" rel="noopener noreferrer" title="Open Recorded Meeting Video / Zoom">🎥 Meeting</a>
-            <?php else: ?>
-              <span class="pill muted" style="font-size:0.72rem; padding:0.2rem 0.45rem; background:rgba(100,116,139,0.12); color:#64748b;" title="Meeting video not available">Not Available</span>
-            <?php endif; ?>
-            <a class="btn sm" href="<?= h(url('admin/progress.php?id=' . $s['id'])) ?>" title="Live Student Progress">Progress</a>
-            <a class="btn sm primary" href="<?= h(url('admin/report.php?id=' . $s['id'] . '&format=pdf')) ?>" title="Download PDF">⬇ PDF</a>
-            <a class="btn sm ghost" href="<?= h(url('admin/report.php?id=' . $s['id'] . '&format=csv')) ?>" title="Download CSV">CSV</a>
-          </div>
-        </td>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-  </table></div>
-  <?php endif; ?>
 </section>
-<?php
-page_end();
+
+<?php page_end(); ?>
