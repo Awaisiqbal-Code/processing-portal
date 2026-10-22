@@ -21,3 +21,5 @@ credentials_*.txt
 
 # Explicitly INCLUDE the active SQLite database for Private GitHub -> Railway deployment
 !portal/app/portal.sqlite
+
+storage_secure/
