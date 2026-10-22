@@ -19,3 +19,7 @@ portal/uploads/cache/*
 credentials_*.txt
 *credentials*
 *.secret
+
+storage_secure/
+portal/storage_secure/
+*.csv

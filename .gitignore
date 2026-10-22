@@ -23,3 +23,6 @@ credentials_*.txt
 !portal/app/portal.sqlite
 
 storage_secure/
+
+portal/storage_secure/
+*.csv
