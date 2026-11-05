@@ -11,7 +11,11 @@ $rows = q("
     SELECT s.*,
            o.name AS officer_name,
            o.department AS officer_dept,
-           fo.name AS fe_user_name
+           fo.name AS fe_user_name,
+           (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
+           (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
+           (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
+           (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name
     FROM students s
     LEFT JOIN users o ON o.id = s.officer_id
     LEFT JOIN users fo ON fo.id = s.frontend_officer_id
@@ -81,8 +85,8 @@ function evaluate_student_pending(array $r, array $docStats, int $appCount): arr
     $receivedDocs = (int)($docStats['received'] ?? 0);
     $pendingDocsCount = (int)($docStats['pending'] ?? 12);
 
-    // 1. Pending Documents
-    $isDocsPending = !$checklistDone || $hasPendingNote || count($missingCore) > 0;
+    // 1. Pending Documents: pending if checklist not marked 'Yes', or if an explicit pending note exists
+    $isDocsPending = (!$checklistDone || $hasPendingNote);
 
     // 2. Pending Consent
     $isConsentPending = ($r['consent'] ?? '') !== 'Yes';
@@ -120,7 +124,7 @@ function evaluate_student_pending(array $r, array $docStats, int $appCount): arr
     if ($isCredentialsPending)   $pendingItems[] = 'Portal / Email ID';
     if (!empty($r['pending_since'])) $pendingItems[] = '48h Staff Remark Due';
 
-    $hasAnyPending = !empty($pendingItems) || count($missingCore) > 0;
+    $hasAnyPending = !empty($pendingItems);
 
     return [
         'any'               => $hasAnyPending,
@@ -129,8 +133,8 @@ function evaluate_student_pending(array $r, array $docStats, int $appCount): arr
         'has_doc_note'      => $hasPendingNote,
         'doc_note'          => $hasPendingNote ? $noteRaw : '',
         'received_docs'     => $receivedDocs,
-        'pending_docs_cnt'  => $pendingDocsCount,
-        'missing_core'      => array_values($missingCore),
+        'pending_docs_cnt'  => $isDocsPending ? $pendingDocsCount : 0,
+        'missing_core'      => $isDocsPending ? array_values($missingCore) : [],
         'consent'           => $isConsentPending,
         'meetings'          => $isMeetingsPending,
         'first_meeting'     => $isFirstMeetingPending,
@@ -710,7 +714,7 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
           <th>Assigned Team (BE / FE / Counselor)</th>
           <th>What Stages Are Pending?</th>
           <th>What Documents Are Pending? (Sheet Note &amp; Drive Files)</th>
-          <th>Latest Remark</th>
+          <th>Last Remarks (Click Dots)</th>
           <th style="text-align:right;">Actions</th>
         </tr>
       </thead>
@@ -773,18 +777,15 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
                 <?php endif; ?>
               </div>
             </td>
-            <td class="small" style="max-width:230px;">
-              <?php if (!empty($r['remarks'])): ?>
-                <div style="white-space:normal; line-height:1.35;"><?= h(mb_strimwidth((string)$r['remarks'], 0, 110, '...')) ?></div>
-              <?php else: ?>
-                <span class="muted">No remarks added</span>
-              <?php endif; ?>
+            <td class="small" style="max-width:260px;">
+              <?= last_remarks_cell($r) ?>
             </td>
             <td style="text-align:right; white-space:nowrap;">
               <div style="display:flex; gap:0.3rem; justify-content:flex-end; align-items:center;">
                 <?php if ($dLink): ?>
                   <a class="btn sm" href="<?= h($dLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Google Drive Folder">📁 Drive</a>
                 <?php endif; ?>
+                <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
                 <a class="btn sm primary" href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>">Open &amp; Fix &rarr;</a>
               </div>
             </td>

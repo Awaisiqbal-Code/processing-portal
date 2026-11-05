@@ -63,6 +63,42 @@ if ($action === 'delete_custom') {
     redirect_back();
 }
 
+// 1b. Mark Document Status (Staff can mark a required document as Received / Verified / Not Required / Pending without file upload)
+if ($action === 'set_doc_status' && is_staff_role($u['role'])) {
+    $docIndex = (int)post('doc_index');
+    $newStatus = trim((string)post('doc_status'));
+    if (isset(DOCS[$docIndex]) && in_array($newStatus, ['Pending', 'Requested', 'Received', 'Verified'], true)) {
+        $existing = q("SELECT * FROM student_documents WHERE student_id = ? AND doc_index = ?", [$studentId, $docIndex])->fetch();
+        if ($existing) {
+            q("UPDATE student_documents SET status = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?", [$newStatus, now(), $studentId, $docIndex]);
+        } else {
+            q("INSERT INTO student_documents (student_id, doc_index, status, updated_at) VALUES (?, ?, ?, ?)", [$studentId, $docIndex, $newStatus, now()]);
+        }
+        log_action("Marked document '" . DOCS[$docIndex] . "' as {$newStatus}", $studentId);
+        flash("Document '" . DOCS[$docIndex] . "' marked as {$newStatus}.", 'ok');
+    }
+    redirect_back();
+}
+
+// 1c. Mark All Core Required Documents as Received (Clears pending document count banner)
+if ($action === 'mark_all_docs_received' && is_staff_role($u['role'])) {
+    foreach (DOCS as $idx => $dName) {
+        if (in_array($idx, [9, 10, 11], true)) continue;
+        $existing = q("SELECT * FROM student_documents WHERE student_id = ? AND doc_index = ?", [$studentId, $idx])->fetch();
+        if ($existing) {
+            if (!in_array($existing['status'] ?? '', ['Received', 'Verified'], true)) {
+                q("UPDATE student_documents SET status = 'Received', updated_at = ? WHERE student_id = ? AND doc_index = ?", [now(), $studentId, $idx]);
+            }
+        } else {
+            q("INSERT INTO student_documents (student_id, doc_index, status, updated_at) VALUES (?, ?, 'Received', ?)", [$studentId, $idx, now()]);
+        }
+    }
+    q("UPDATE students SET docs_checklist = 'Yes' WHERE id = ?", [$studentId]);
+    log_action("Marked all core required documents as Received", $studentId);
+    flash("All core required documents marked as Received.", 'ok');
+    redirect_back();
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     exit('Method Not Allowed');

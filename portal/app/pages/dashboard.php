@@ -3,7 +3,12 @@ declare(strict_types=1);
 // Shared dashboard for admin and officer. Expects $u.
 
 [$w, $p] = scope_sql($u);
-$rows = q("SELECT s.*, o.name AS officer_name FROM students s LEFT JOIN users o ON o.id = s.officer_id WHERE $w", $p)->fetchAll();
+$rows = q("SELECT s.*, o.name AS officer_name,
+                  (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
+                  (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
+                  (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
+                  (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name
+           FROM students s LEFT JOIN users o ON o.id = s.officer_id WHERE $w", $p)->fetchAll();
 $admin = is_admin_role($u['role']);
 $base = $admin ? 'admin' : 'officer';
 
@@ -171,7 +176,8 @@ if ($u['role'] === 'counselor') {
               <th>Student &amp; Status Badges</th>
               <th>Program &amp; Country</th>
               <th>Drive &amp; Meetings</th>
-              <th>Progress Stage</th>
+              <th>Last Remarks (Click Dots)</th>
+              <th>Next Step</th>
               <th style="text-align:right;">Action</th>
             </tr>
           </thead>
@@ -222,6 +228,7 @@ if ($u['role'] === 'counselor') {
                     <?php endif; ?>
                   </div>
                 </td>
+                <td><?= last_remarks_cell($r) ?></td>
                 <td><?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?></td>
                 <td style="text-align:right;">
                   <a class="btn sm primary" href="<?= h(url('officer/student.php?id=' . (int)$r['id'])) ?>">View Student &rarr;</a>
@@ -431,7 +438,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 
 <section class="panel">
   <div class="panel-h">
-    <div><h2><?= $admin ? 'Recent Student Files' : 'My Assigned Students' ?> (Showing <?= min(25, count($rows)) ?> of <?= count($rows) ?>)</h2><p>Click on any student name to edit their record or click Progress to view full checklist</p></div>
+    <div><h2><?= $admin ? 'Recent Student Files' : 'My Assigned Students' ?> (Showing <?= min(25, count($rows)) ?> of <?= count($rows) ?>)</h2><p>Click on any student name to edit their record or click Last Remarks dots to open all remarks &amp; add new remarks</p></div>
     <div class="row-actions">
       <a class="btn sm primary" href="<?= h(url($base . '/students.php')) ?>">View all <?= count($rows) ?> students →</a>
     </div>
@@ -440,7 +447,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <div class="empty">No students assigned yet.</div>
   <?php else: ?>
   <div class="tbl"><table>
-    <thead><tr><th>SR#</th><th>Student</th><th>Country &amp; Program</th><th>Counselor</th><?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?><th>Docs & Meeting</th><th>Refund</th><th>Progress</th><th>Next step</th><th>Actions</th></tr></thead>
+    <thead><tr><th>SR#</th><th>Student</th><th>Country &amp; Program</th><th>Counselor</th><?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?><th>Docs & Meeting</th><th>Refund</th><th>Last Remarks (Click Dots)</th><th>Next step</th><th>Actions</th></tr></thead>
     <tbody>
     <?php foreach (array_slice($rows, 0, 25) as $r):
         $ns = next_stage($r);
@@ -476,12 +483,13 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
           </div>
         </td>
         <td><?php if ($r['refund']): ?><span class="pill <?= $r['refund'] === 'Non-Refundable' ? 'bad' : '' ?>"><?= h($r['refund']) ?></span><?php endif; ?></td>
-        <td><a href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>" title="View student progress" style="text-decoration:none; display:inline-block;"><?= progress_dots($r) ?></a></td>
+        <td><?= last_remarks_cell($r) ?></td>
         <td><?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?></td>
         <td>
           <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
             <a class="btn sm" href="<?= h(url($base . '/student.php?id=' . $r['id'])) ?>">Edit</a>
-            <a class="btn sm primary" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>">Progress</a>
+            <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
+            <a class="btn sm primary" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>">File</a>
           </div>
         </td>
       </tr>

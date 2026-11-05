@@ -48,10 +48,21 @@ $isStaff = ($preview || is_staff_role($u['role']));
 $isStudent = !$isStaff;
 
 // Compute pending required documents for banner notification
+// Note: Offer letter (9), Enrollment / CAS (10), and Visa decision letter (11) are post-admission milestones, not initial student uploads.
+// For BS students, Bachelor degree and transcript (4) is also not required.
 $pendingDocsList = [];
-foreach (DOCS as $idx => $dName) {
-    if (empty($docs[$idx]['file_path'])) {
-        $pendingDocsList[$idx] = $dName;
+$stLevel = strtoupper(trim((string)($r['program_level'] ?? 'MS')));
+$docsChecklistDone = (($r['docs_checklist'] ?? '') === 'Yes') && empty(trim((string)($r['pending_docs_note'] ?? '')));
+
+if (!$docsChecklistDone) {
+    foreach (DOCS as $idx => $dName) {
+        if (in_array($idx, [9, 10, 11], true)) continue;
+        if ($stLevel === 'BS' && $idx === 4) continue;
+        $dStatus = (string)($docs[$idx]['status'] ?? '');
+        $hasFileOrDone = !empty($docs[$idx]['file_path']) || in_array($dStatus, ['Received', 'Verified'], true);
+        if (!$hasFileOrDone) {
+            $pendingDocsList[$idx] = $dName;
+        }
     }
 }
 $pendingCount = count($pendingDocsList);
@@ -92,6 +103,19 @@ if ($preview): ?>
         <?php if (!empty($r['pending_docs_note'])): ?>
           <div style="background: var(--bg); border: 1px dashed var(--border); border-radius: 6px; padding: 0.65rem 0.9rem; font-size: 0.85rem; margin-top: 0.5rem;">
             <b>📝 Processing Officer Note:</b> <?= nl2br(h($r['pending_docs_note'])) ?>
+          </div>
+        <?php endif; ?>
+        <?php if ($isStaff): ?>
+          <div style="margin-top:0.85rem; padding-top:0.65rem; border-top:1px solid rgba(217, 119, 6, 0.25); display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
+            <form method="post" action="<?= h(url('upload_document.php')) ?>" style="display:inline;">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="mark_all_docs_received">
+              <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
+              <button type="submit" class="btn sm" style="background:#059669; color:#fff; border:none; font-weight:600; cursor:pointer;" onclick="return confirm('Mark all required core documents as Received for this student? This will clear the pending documents notice.');">
+                ✓ Mark All Core Docs Received &amp; Clear Notice
+              </button>
+            </form>
+            <a class="btn sm ghost" href="<?= h(url($base . '/student.php?id=' . (int)$sid . '#onboarding')) ?>">Edit Checklist in Profile &rarr;</a>
           </div>
         <?php endif; ?>
       </div>
@@ -216,15 +240,27 @@ if ($preview): ?>
                 ⚠️ Not submitted yet
               </div>
               <!-- Direct inline upload form right here for both student and staff! -->
-              <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" style="margin-top:0.4rem; display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
-                <?= csrf_field() ?>
-                <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-                <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
-                <input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="font-size:0.78rem; max-width:210px;">
-                <button class="btn sm primary" type="submit" style="padding:0.2rem 0.6rem; font-size:0.78rem;">
-                  📤 Upload <?= h($d) ?>
-                </button>
-              </form>
+              <div style="margin-top:0.4rem; display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+                <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
+                  <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
+                  <input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="font-size:0.78rem; max-width:210px;">
+                  <button class="btn sm primary" type="submit" style="padding:0.2rem 0.6rem; font-size:0.78rem;">
+                    📤 Upload <?= h($d) ?>
+                  </button>
+                </form>
+                <?php if ($isStaff): ?>
+                  <form method="post" action="<?= h(url('upload_document.php')) ?>" style="display:inline;">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action" value="set_doc_status">
+                    <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
+                    <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
+                    <input type="hidden" name="doc_status" value="Received">
+                    <button class="btn sm ghost" type="submit" style="padding:0.2rem 0.55rem; font-size:0.78rem;">✓ Mark Received</button>
+                  </form>
+                <?php endif; ?>
+              </div>
             <?php endif; ?>
           </div>
           <span class="pill <?= pill_class($v ?: 'Pending') ?>" style="margin-top:0.2rem;"><?= h($v ?: 'Pending') ?></span>

@@ -33,7 +33,11 @@ if ($rawParam === 'none') {
 }
 
 // Fetch all students for global stats
-$allStudents = q("SELECT s.*, o.name AS officer_name, fo.name AS fe_officer_user_name 
+$allStudents = q("SELECT s.*, o.name AS officer_name, fo.name AS fe_officer_user_name,
+                  (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
+                  (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
+                  (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
+                  (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name
                   FROM students s 
                   LEFT JOIN users o ON o.id = s.officer_id 
                   LEFT JOIN users fo ON fo.id = s.frontend_officer_id 
@@ -379,7 +383,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
             <th><?= $isFeOfficer ? 'Back End Officer' : 'Front End Officer' ?></th>
             <th>Branch & Intake</th>
             <th>Docs & Meeting</th>
-            <th>Progress</th>
+            <th>Last Remarks (Click Dots)</th>
             <th>Next Step</th>
             <th>Offer</th>
             <th>Visa</th>
@@ -434,9 +438,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
               </div>
             </td>
             <td>
-              <a href="<?= h($progressUrl) ?>" title="Click to open student progress" style="text-decoration:none; display:inline-block;">
-                <?= progress_dots($r) ?>
-              </a>
+              <?= last_remarks_cell($r) ?>
             </td>
             <td>
               <?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?>
@@ -459,8 +461,9 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
             </td>
             <td>
               <div style="display:flex; gap:0.3rem; align-items:center; flex-wrap:wrap;">
-                <a class="btn sm primary" href="<?= h($progressUrl) ?>" title="Open Full Student Portal View">Progress</a>
                 <a class="btn sm" href="<?= h($editUrl) ?>" title="Edit Student Record">Edit</a>
+                <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
+                <a class="btn sm primary" href="<?= h($progressUrl) ?>" title="Open Full Student Portal View">File</a>
               </div>
             </td>
           </tr>

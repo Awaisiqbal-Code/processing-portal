@@ -420,9 +420,243 @@
     setInterval(fetchNotifications, 60000);
   }
 
+  function initRemarksModal() {
+    var modal = document.getElementById('remarks-modal');
+    if (!modal) return;
+
+    var apiUrl = modal.getAttribute('data-api-url') || 'remarks_api.php';
+    var csrf = modal.getAttribute('data-csrf') || '';
+    var studentBase = modal.getAttribute('data-student-base') || 'student.php?id=';
+
+    var titleEl = document.getElementById('remarks-modal-title');
+    var subEl = document.getElementById('remarks-modal-sub');
+    var profileLink = document.getElementById('remarks-modal-profile-link');
+    var closeBtn = document.getElementById('remarks-modal-close');
+    var form = document.getElementById('remarks-modal-form');
+    var sidInput = document.getElementById('remarks-modal-sid');
+    var textInput = document.getElementById('remarks-modal-input');
+    var feedbackEl = document.getElementById('remarks-modal-feedback');
+    var submitBtn = document.getElementById('remarks-modal-submit');
+    var listEl = document.getElementById('remarks-modal-list');
+
+    var activeTriggerBtn = null;
+
+    function esc(str) {
+      if (!str) return '';
+      return String(str).replace(/[&<>"']/g, function (m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    function buildDotsHtml(total) {
+      var html = '<span class="steps remark-dots">';
+      if (total > 0) {
+        var show = Math.min(10, total);
+        for (var i = 0; i < show; i++) {
+          var isLatest = (i === show - 1);
+          html += '<i class="d' + (isLatest ? ' latest' : '') + '"></i>';
+        }
+      } else {
+        html += '<i class="empty-dot"></i>';
+      }
+      html += '</span>';
+      return html;
+    }
+
+    function updateTableCellsForStudent(sid, remarks) {
+      var total = remarks ? remarks.length : 0;
+      var latest = total > 0 ? remarks[0] : null;
+      var btns = document.querySelectorAll('[data-open-remarks="' + sid + '"]');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var dotsHtml = buildDotsHtml(total);
+        var badgeHtml = '<span class="pill sm ' + (total > 0 ? 'acc' : 'muted') + '" style="font-size:10.8px; padding:1px 6px;">'
+                      + (total > 0 ? total + ' remark' + (total > 1 ? 's' : '') : 'No remarks')
+                      + '</span>';
+        var metaParts = [];
+        if (latest && latest.author_name && latest.author_name !== 'Legacy import') {
+          metaParts.push(esc(latest.author_name));
+        }
+        if (latest && latest.date_formatted) {
+          metaParts.push(esc(latest.date_formatted));
+        }
+        var metaHtml = metaParts.length > 0
+          ? '<span class="small muted" style="font-size:10.5px;"> · ' + metaParts.join(' · ') + '</span>'
+          : '';
+        var prevText = (latest && latest.remark_text)
+          ? esc(latest.remark_text.length > 52 ? latest.remark_text.substring(0, 50) + '…' : latest.remark_text)
+          : '<span class="muted">Click to add remark…</span>';
+        b.innerHTML = '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">' + dotsHtml + badgeHtml + metaHtml + '</div>'
+                    + '<div class="remark-cell-text">' + prevText + '</div>';
+      }
+    }
+
+    function renderRemarksList(res) {
+      var remarks = res.remarks || [];
+      var total = remarks.length;
+      if (subEl) {
+        var meta = [];
+        if (res.country) meta.push(res.country);
+        if (res.program_level) meta.push(res.program_level);
+        meta.push(total + ' total remark' + (total === 1 ? '' : 's'));
+        subEl.textContent = meta.join(' · ');
+      }
+
+      if (total === 0) {
+        listEl.innerHTML = '<div class="empty" style="padding:18px;">No remarks recorded for this student yet. Add the first remark above!</div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < total; i++) {
+        var r = remarks[i];
+        var isLatest = (i === 0);
+        var isCounselor = (r.author_role === 'counselor');
+        var borderStyle = isLatest ? 'border-left:4px solid #0F5D9E;' : 'border-left:3px solid var(--line-strong);';
+        html += '<div class="li" style="flex-direction:column; align-items:flex-start; gap:5px; padding:10px 13px; ' + borderStyle + '">';
+        html += '<div style="display:flex; justify-content:space-between; width:100%; align-items:center; flex-wrap:wrap; gap:6px;">';
+        html += '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12.5px;">';
+        html += '<span class="steps"><i class="d' + (isLatest ? ' latest' : '') + '"></i></span>';
+        html += '<b>' + esc(r.author_name || 'Staff') + '</b>';
+        if (isLatest) {
+          html += '<span class="pill sm acc" style="font-size:10.5px; padding:1px 6px;">Latest Remark</span>';
+        }
+        if (isCounselor) {
+          html += '<span class="pill sm" style="background:#0284c7; color:#fff; font-size:10.5px; padding:1px 6px;">Counselor</span>';
+        }
+        html += '</div>';
+        html += '<span class="small muted" style="font-size:11.5px;">' + esc(r.date_formatted || '') + (r.time_ago ? ' (' + esc(r.time_ago) + ')' : '') + '</span>';
+        html += '</div>';
+        html += '<div style="font-size:13.3px; line-height:1.48; color:var(--fg); white-space:pre-wrap; word-break:break-word;">' + esc(r.remark_text) + '</div>';
+        html += '</div>';
+      }
+      listEl.innerHTML = html;
+    }
+
+    function openModal(sid, stName, triggerBtn) {
+      activeTriggerBtn = triggerBtn || null;
+      sidInput.value = String(sid);
+      if (titleEl) titleEl.textContent = stName ? ('Remarks · ' + stName) : ('Student #' + sid + ' Remarks');
+      if (subEl) subEl.textContent = 'Loading remarks history...';
+      if (profileLink) profileLink.href = studentBase + encodeURIComponent(sid) + '#remarks';
+      if (textInput) textInput.value = '';
+      if (feedbackEl) {
+        feedbackEl.textContent = 'Each remark adds a dot to the student\'s remark bar.';
+        feedbackEl.style.color = 'var(--muted)';
+      }
+      listEl.innerHTML = '<div class="empty" style="padding:18px;">Loading remarks...</div>';
+
+      modal.removeAttribute('hidden');
+      modal.setAttribute('aria-hidden', 'false');
+
+      fetch(apiUrl + '?student_id=' + encodeURIComponent(sid), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.ok) {
+          if (titleEl && res.student_name) titleEl.textContent = 'Remarks · ' + res.student_name;
+          renderRemarksList(res);
+          updateTableCellsForStudent(sid, res.remarks || []);
+        } else {
+          listEl.innerHTML = '<div class="empty" style="color:var(--bad);">' + esc((res && res.error) || 'Could not load remarks.') + '</div>';
+        }
+      })
+      .catch(function () {
+        listEl.innerHTML = '<div class="empty" style="color:var(--bad);">Network error while loading remarks.</div>';
+      });
+    }
+
+    function closeModal() {
+      modal.setAttribute('hidden', 'hidden');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('[data-open-remarks]') : null;
+      if (btn) {
+        e.preventDefault();
+        e.stopPropagation();
+        var sid = btn.getAttribute('data-open-remarks');
+        var stName = btn.getAttribute('data-student-name') || '';
+        if (sid) openModal(sid, stName, btn);
+        return;
+      }
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        closeModal();
+      });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
+        closeModal();
+      }
+    });
+
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var sid = sidInput.value;
+        var text = textInput.value.trim();
+        if (!sid || !text) return;
+
+        if (submitBtn) submitBtn.disabled = true;
+        if (feedbackEl) {
+          feedbackEl.textContent = 'Saving remark...';
+          feedbackEl.style.color = 'var(--muted)';
+        }
+
+        var body = '_csrf=' + encodeURIComponent(csrf)
+                 + '&student_id=' + encodeURIComponent(sid)
+                 + '&remark_text=' + encodeURIComponent(text);
+
+        fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+          credentials: 'same-origin',
+          body: body
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (submitBtn) submitBtn.disabled = false;
+          if (res && res.ok) {
+            textInput.value = '';
+            if (feedbackEl) {
+              feedbackEl.textContent = '✓ Remark saved & new dot added!';
+              feedbackEl.style.color = 'var(--ok)';
+            }
+            renderRemarksList(res);
+            updateTableCellsForStudent(sid, res.remarks || []);
+          } else {
+            if (feedbackEl) {
+              feedbackEl.textContent = (res && res.error) || 'Failed to save remark.';
+              feedbackEl.style.color = 'var(--bad)';
+            }
+          }
+        })
+        .catch(function () {
+          if (submitBtn) submitBtn.disabled = false;
+          if (feedbackEl) {
+            feedbackEl.textContent = 'Network error while saving remark.';
+            feedbackEl.style.color = 'var(--bad)';
+          }
+        });
+      });
+    }
+  }
+
   function initApp() {
     initStaffIdleTimer();
     initNotificationBell();
+    initRemarksModal();
   }
 
   if (document.readyState === 'loading') {

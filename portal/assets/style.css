@@ -556,10 +556,44 @@ td a:hover { color: var(--brand-trust); }
 .pill.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 .pill.acc { background: var(--accent-soft); color: var(--accent); border-color: rgba(19, 146, 203, 0.25); }
 
-/* Progress Steps & Lists */
-.steps { display: inline-flex; gap: 3px; vertical-align: middle; }
-.steps i { width: 10px; height: 10px; border-radius: 3px; background: var(--line-strong); }
-.steps i.d { background: #1392CB; }
+/* Progress Steps, Remark Dots & Lists */
+.steps { display: inline-flex; gap: 3.5px; vertical-align: middle; align-items: center; }
+.steps i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); display: inline-block; transition: transform 0.15s ease, background-color 0.15s ease; }
+.steps i.d { background: #1392CB; box-shadow: 0 0 0 1px rgba(19, 146, 203, 0.25); }
+.steps i.d.latest { background: #0F5D9E; width: 11px; height: 11px; box-shadow: 0 0 0 2.5px rgba(116, 195, 228, 0.45); }
+:root[data-theme="dark"] .steps i.d.latest { background: #74C3E4; }
+.steps i.empty-dot { background: var(--line-strong); opacity: 0.55; }
+
+.remark-cell-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--line);
+  border-left: 3px solid #1392CB;
+  border-radius: 9px;
+  padding: 6px 10px;
+  text-align: left;
+  cursor: pointer;
+  min-width: 190px;
+  max-width: 280px;
+  white-space: normal;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+.remark-cell-btn:hover {
+  border-color: #0F5D9E;
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.remark-cell-text {
+  font-size: 12.2px;
+  line-height: 1.32;
+  color: var(--fg);
+  font-weight: 500;
+  word-break: break-word;
+}
 .empty { padding: 28px; text-align: center; color: var(--muted); font-weight: 500; }
 .list { display: grid; gap: 8px; }
 .li {

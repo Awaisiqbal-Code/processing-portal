@@ -185,6 +185,39 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
     </div>
   </div>
 </div>
+
+<!-- Student Remarks Interactive Modal -->
+<div id="remarks-modal" class="idle-modal-backdrop" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="remarks-modal-title" data-api-url="<?= h(url('remarks_api.php')) ?>" data-csrf="<?= h(csrf_token()) ?>" data-student-base="<?= h(url(is_admin_role($u['role']) ? 'admin' : 'officer') . '/student.php?id=') ?>">
+  <div class="idle-modal-card remarks-modal-card" style="max-width:620px; width:100%; border-color:var(--brand-trust); padding:20px 22px; max-height:88vh; display:flex; flex-direction:column; gap:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:1px solid var(--line); padding-bottom:10px;">
+      <div>
+        <div class="eyebrow" style="color:var(--accent);">💬 Student Remarks &amp; Timeline</div>
+        <h2 id="remarks-modal-title" style="font-size:19px; margin-top:2px;">Student Remarks</h2>
+        <div id="remarks-modal-sub" class="small muted" style="margin-top:2px;">All saved remarks and updates</div>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <a id="remarks-modal-profile-link" href="#" class="btn sm ghost">Open Profile &rarr;</a>
+        <button type="button" id="remarks-modal-close" class="btn sm ghost" aria-label="Close" style="padding:4px 9px; font-weight:700;">✕</button>
+      </div>
+    </div>
+
+    <!-- Add New Remark Form Inside Modal -->
+    <form id="remarks-modal-form" style="display:flex; flex-direction:column; gap:8px; background:var(--sunk); padding:11px 13px; border-radius:10px; border:1px solid var(--line);">
+      <input type="hidden" id="remarks-modal-sid" name="student_id" value="">
+      <label style="font-size:12.5px; font-weight:700; color:var(--fg);">➕ Add New Remark (Adds a new dot &amp; updates Last Remark)</label>
+      <textarea id="remarks-modal-input" name="remark_text" rows="2" required placeholder="Write a new remark or update for this student..." style="width:100%; border:1px solid var(--line); background:var(--input-bg); color:var(--fg); border-radius:8px; padding:8px 10px; font-size:13.2px; resize:vertical;"></textarea>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span id="remarks-modal-feedback" class="small muted">Each remark adds a clickable dot to the student's remark bar.</span>
+        <button type="submit" id="remarks-modal-submit" class="btn sm primary">Save Remark</button>
+      </div>
+    </form>
+
+    <!-- Remarks History List -->
+    <div id="remarks-modal-list" style="overflow-y:auto; max-height:360px; display:flex; flex-direction:column; gap:8px; padding-right:2px;">
+      <div class="empty">Loading remarks...</div>
+    </div>
+  </div>
+</div>
 <?php endif; ?>
 <?php else: ?>
 <div class="guest-topbar">
@@ -219,7 +252,74 @@ function pill_class(string $v): string {
 }
 
 function progress_dots(array $r): string {
-    $o = '<span class="steps" title="' . done_count($r) . ' of ' . count(STAGES) . ' steps">';
-    foreach (STAGES as $i => $_) $o .= '<i class="' . (stage_done($r, $i) ? 'd' : '') . '"></i>';
-    return $o . '</span>';
+    return last_remarks_cell($r);
+}
+
+/**
+ * Renders the interactive "Last Remarks" cell with remark dots.
+ * Each remark adds a dot; clicking opens the full remarks history & add-remark modal.
+ */
+function last_remarks_cell(array $r): string {
+    $sid = (int)($r['id'] ?? 0);
+    $stName = (string)($r['name'] ?? 'Student');
+    $remCount = isset($r['remark_count']) ? (int)$r['remark_count'] : -1;
+    $lastText = trim((string)($r['last_remark_text'] ?? ($r['remarks'] ?? '')));
+    $lastAuthor = trim((string)($r['last_remark_author_name'] ?? ''));
+    $lastDate = trim((string)($r['last_remark_created_at'] ?? ($r['last_remark_at'] ?? '')));
+
+    if ($remCount < 0) {
+        try {
+            $remCount = (int)q("SELECT COUNT(*) FROM student_remarks WHERE student_id = ? AND deleted_at IS NULL", [$sid])->fetchColumn();
+            if ($lastText === '' || $lastAuthor === '') {
+                $lr = q("SELECT remark_text, author_name, created_at FROM student_remarks WHERE student_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1", [$sid])->fetch();
+                if ($lr) {
+                    $lastText = trim((string)$lr['remark_text']);
+                    $lastAuthor = trim((string)$lr['author_name']);
+                    $lastDate = trim((string)$lr['created_at']);
+                }
+            }
+        } catch (Throwable) {
+            $remCount = $lastText !== '' ? 1 : 0;
+        }
+    }
+    if ($remCount === 0 && $lastText !== '') {
+        $remCount = 1;
+    }
+
+    // Build remark dots: each remark adds an active filled dot (up to 10 visible dots)
+    $dotsHtml = '<span class="steps remark-dots">';
+    if ($remCount > 0) {
+        $showDots = min(10, $remCount);
+        for ($i = 0; $i < $showDots; $i++) {
+            $isLatest = ($i === $showDots - 1);
+            $dotsHtml .= '<i class="d' . ($isLatest ? ' latest' : '') . '"></i>';
+        }
+    } else {
+        $dotsHtml .= '<i class="empty-dot"></i>';
+    }
+    $dotsHtml .= '</span>';
+
+    $countBadge = '<span class="pill sm ' . ($remCount > 0 ? 'acc' : 'muted') . '" style="font-size:10.8px; padding:1px 6px;">'
+                . ($remCount > 0 ? $remCount . ' remark' . ($remCount > 1 ? 's' : '') : 'No remarks')
+                . '</span>';
+
+    $previewText = $lastText !== ''
+        ? h(mb_strimwidth($lastText, 0, 52, '…'))
+        : '<span class="muted">Click to add remark…</span>';
+
+    $metaParts = [];
+    if ($lastAuthor !== '' && $lastAuthor !== 'Legacy import') {
+        $metaParts[] = h($lastAuthor);
+    }
+    if ($lastDate !== '') {
+        $metaParts[] = h(fmt_date(substr($lastDate, 0, 10)));
+    }
+    $metaHtml = !empty($metaParts)
+        ? '<span class="small muted" style="font-size:10.5px;"> · ' . implode(' · ', $metaParts) . '</span>'
+        : '';
+
+    return '<button type="button" class="remark-cell-btn" data-open-remarks="' . $sid . '" data-student-name="' . h($stName) . '" title="Click to view all remarks &amp; add new remark for ' . h($stName) . '">'
+         . '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">' . $dotsHtml . $countBadge . $metaHtml . '</div>'
+         . '<div class="remark-cell-text">' . $previewText . '</div>'
+         . '</button>';
 }

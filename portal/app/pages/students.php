@@ -93,7 +93,7 @@ if ($fc !== '') {
     if ($fc === 'none') {
         $where[] = "(s.country IS NULL OR s.country = '')";
     } else {
-        $where[] = "s.country = ?";
+        $where[] = "LOWER(TRIM(s.country)) = LOWER(TRIM(?))";
         $params[] = $fc;
     }
 }
@@ -134,8 +134,19 @@ if ($finc === '1') {
 
 // Counselor filter
 if ($fcounselor !== '') {
-    $where[] = "(s.assigned_counselor_id = ? OR LOWER(TRIM(s.counselor)) = LOWER(TRIM(?)))";
-    array_push($params, (int)$fcounselor, $fcounselor);
+    if (ctype_digit((string)$fcounselor)) {
+        $cName = q("SELECT name FROM users WHERE id = ?", [(int)$fcounselor])->fetchColumn();
+        if ($cName) {
+            $where[] = "(s.assigned_counselor_id = ? OR LOWER(TRIM(s.counselor)) = LOWER(TRIM(?)))";
+            array_push($params, (int)$fcounselor, (string)$cName);
+        } else {
+            $where[] = "s.assigned_counselor_id = ?";
+            $params[] = (int)$fcounselor;
+        }
+    } else {
+        $where[] = "(LOWER(TRIM(s.counselor)) = LOWER(TRIM(?)) OR s.assigned_counselor_id IN (SELECT id FROM users WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND role = 'counselor'))";
+        array_push($params, $fcounselor, $fcounselor);
+    }
 }
 
 // PMS Lead filter
@@ -175,6 +186,7 @@ $orderSql = match ($sort) {
 // Execute query
 $rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name,
                   (SELECT COUNT(*) FROM student_applications sa WHERE sa.student_id = s.id) AS app_count,
+                  (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
                   (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
                   (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
                   (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name,
@@ -270,7 +282,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
   </div>
 
   <!-- Phase 3: Program Level Tabs (All | BS | MS | Incomplete) -->
-  <div style="display:flex; gap:0.5rem; border-bottom:1.5px solid var(--border); padding-bottom:0.6rem; margin-bottom:1.15rem; flex-wrap:wrap; align-items:center;">
+  <div style="display:flex; gap:0.5rem; border-bottom:1.5px solid var(--border); padding-bottom:0.6rem; margin-bottom:0.85rem; flex-wrap:wrap; align-items:center;">
     <span class="small muted" style="font-weight:600; margin-right:0.25rem;">🎓 Degree:</span>
     <a href="<?= h($qs(['tab' => 'all', 'page' => 1])) ?>" class="btn sm <?= $tab === 'all' ? 'primary' : 'ghost' ?>">
       All Degrees <span class="pill sm" style="margin-left:0.35rem;"><?= $cntAll ?></span>
@@ -286,9 +298,48 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </a>
   </div>
 
+  <?php
+    $activeFilters = [];
+    if ($tab !== 'all') $activeFilters['tab'] = 'Degree: ' . strtoupper($tab);
+    if ($fc !== '')     $activeFilters['country'] = 'Country: ' . ($fc === 'none' ? 'Not set' : $fc);
+    if ($fq !== '')     $activeFilters['q'] = 'Search: "' . $fq . '"';
+    if ($fo !== '')     $activeFilters['officer'] = 'Officer: ' . ($filteredOfficerName ?? $fo);
+    if ($fcounselor !== '') {
+        $cnLabel = $fcounselor;
+        foreach ($counselorsList as $cl) { if ((string)$cl['id'] === $fcounselor) { $cnLabel = $cl['name']; break; } }
+        $activeFilters['counselor'] = 'Counselor: ' . $cnLabel;
+    }
+    if ($fpms !== '')   $activeFilters['pms_lead'] = 'PMS Lead';
+    if ($fst !== '')    $activeFilters['status'] = 'Status: ' . ucfirst($fst);
+    if ($fv !== '')     $activeFilters['verified'] = $fv === '1' ? 'Verified' : 'Unverified';
+    if ($fref !== '')   $activeFilters['refunded'] = $fref === '1' ? 'Refunded' : 'Not Refunded';
+    if ($fp !== '')     $activeFilters['pending'] = $fp === '1' ? 'Pending Action' : 'Up to date';
+    if ($finc !== '')   $activeFilters['incomplete'] = $finc === '1' ? 'Incomplete' : 'Complete';
+    if ($fr !== '')     $activeFilters['refund'] = 'Refund: ' . $fr;
+    if ($fs !== '')     $activeFilters['stage'] = 'Next Step: ' . $fs;
+    if ($fk !== '')     $activeFilters['kpi'] = 'KPI: ' . ucfirst(str_replace('_', ' ', $fk));
+    if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Stage Done: ' . STAGES[(int)$fd][0];
+  ?>
+  <?php if (!empty($activeFilters)): ?>
+  <div style="background:var(--accent-soft); border:1.5px solid var(--brand-trust); border-radius:10px; padding:0.55rem 0.9rem; margin-bottom:0.85rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
+    <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+      <span class="small" style="font-weight:700; color:var(--accent);">🔍 Active Filters (Showing <?= $total ?> of <?= $cntAll ?> students):</span>
+      <?php foreach ($activeFilters as $fKey => $fLabel):
+          $clearParam = ($fKey === 'tab') ? ['tab' => 'all', 'page' => 1] : [$fKey => null, 'page' => 1];
+      ?>
+        <a href="<?= h($qs($clearParam)) ?>" class="pill sm acc" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px;" title="Click to remove this filter">
+          <?= h($fLabel) ?> <b>✕</b>
+        </a>
+      <?php endforeach; ?>
+    </div>
+    <a class="btn sm primary" href="<?= h(url($base . '/students.php')) ?>">✕ Clear All Filters (Show All <?= $cntAll ?>)</a>
+  </div>
+  <?php endif; ?>
+
   <!-- Advanced Filtering Toolbar -->
-  <form method="get" class="toolbar" style="gap:0.45rem; flex-wrap:wrap; align-items:center;">
+  <form method="get" action="<?= h(url($base . '/students.php')) ?>" class="toolbar" style="gap:0.45rem; flex-wrap:wrap; align-items:center;">
     <input type="hidden" name="tab" value="<?= h($tab) ?>">
+    <?php if ($fo !== '' && !$admin): ?><input type="hidden" name="officer" value="<?= h($fo) ?>"><?php endif; ?>
     <input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search name, SR#, email, counselor..." aria-label="Search" style="min-width:200px;">
 
     <!-- Country Filter -->
@@ -383,7 +434,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </select>
 
     <button class="btn sm" type="submit">Apply</button>
-    <a class="btn sm ghost" href="<?= h(url($base . '/students.php?tab=' . $tab)) ?>">Reset</a>
+    <a class="btn sm ghost" href="<?= h(url($base . '/students.php')) ?>">Reset All</a>
     <span class="count num" style="margin-left:auto;"><?= $total ?> students</span>
   </form>
 
@@ -431,7 +482,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         <th>Docs &amp; Meeting</th>
         <th>Refund</th>
         <th>Received</th>
-        <th>Progress</th>
+        <th>Last Remarks (Click Dots)</th>
         <th>Next step</th>
         <th>Actions</th>
       </tr>
@@ -550,12 +601,13 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         </td>
         <td><?php if ($r['refund']): ?><span class="pill <?= $r['refund'] === 'Non-Refundable' ? 'bad' : '' ?>"><?= h($r['refund']) ?></span><?php endif; ?></td>
         <td class="num"><?= h(fmt_date($r['received_date'])) ?></td>
-        <td><a href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>" title="View student progress" style="text-decoration:none; display:inline-block;"><?= progress_dots($r) ?></a></td>
+        <td><?= last_remarks_cell($r) ?></td>
         <td><?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?></td>
         <td>
           <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
             <a class="btn sm" href="<?= h($editUrl) ?>"><?= $u['role'] === 'counselor' ? 'View' : 'Edit' ?></a>
-            <a class="btn sm primary" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>">Progress</a>
+            <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
+            <a class="btn sm primary" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>">File</a>
           </div>
         </td>
       </tr>
