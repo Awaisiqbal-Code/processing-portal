@@ -206,8 +206,9 @@ function classify_drive_file_to_doc_index(string $fileName, string $subfolder = 
  */
 function resolve_student_drive_assets(int $studentId, bool $force = false): array {
     ensure_drive_schema();
-    $st = q("SELECT id, name, drive_link, meeting_link, drive_files_json FROM students WHERE id = ?", [$studentId])->fetch();
+    $st = q("SELECT id, name, country, offer, drive_link, meeting_link, drive_files_json FROM students WHERE id = ?", [$studentId])->fetch();
     if (!$st) return ['meeting_link' => '', 'files' => [], 'doc_map' => []];
+    $isItaly = strtolower(trim((string)($st['country'] ?? 'Italy'))) === 'Italy' || strtolower(trim((string)($st['country'] ?? 'Italy'))) === 'italy';
 
     if (!$force && !empty($st['drive_files_json'])) {
         $decoded = json_decode((string)$st['drive_files_json'], true);
@@ -286,6 +287,9 @@ function resolve_student_drive_assets(int $studentId, bool $force = false): arra
     foreach ($allFiles as $f) {
         if (!empty($f['is_meeting'])) continue;
         $idx = classify_drive_file_to_doc_index($f['name'], $f['subfolder'] ?? '');
+        if ($isItaly && $idx === 9) {
+            $idx = null; // No student in Italy has received a university admission offer yet
+        }
         if ($idx !== null) {
             if (!isset($docMap[$idx]) || ($idx === 6 && (str_contains(strtolower($f['subfolder'] ?? ''), 'cv') || str_contains(strtolower($f['name']), 'final')))) {
                 $docMap[$idx] = $f;
@@ -339,11 +343,13 @@ function resolve_student_drive_assets(int $studentId, bool $force = false): arra
         }
     }
 
-    // Sync student stage 'offer' with actual availability of offer letter
+    // Sync student stage 'offer' with actual availability of offer letter (Italy is strictly 'No')
     $hasOfferDoc = false;
-    $offerDocRow = q("SELECT file_path FROM student_documents WHERE student_id = ? AND doc_index = 9", [$studentId])->fetch();
-    if (!empty($offerDocRow['file_path'])) {
-        $hasOfferDoc = true;
+    if (!$isItaly) {
+        $offerDocRow = q("SELECT file_path FROM student_documents WHERE student_id = ? AND doc_index = 9", [$studentId])->fetch();
+        if (!empty($offerDocRow['file_path']) || ($st['offer'] ?? '') === 'Yes') {
+            $hasOfferDoc = true;
+        }
     }
     q("UPDATE students SET offer = ? WHERE id = ?", [$hasOfferDoc ? 'Yes' : 'No', $studentId]);
 

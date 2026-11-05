@@ -58,9 +58,18 @@ return function (PDO $pdo): array {
             remark_text TEXT NOT NULL,
             author_id INTEGER NULL REFERENCES users(id),
             author_name TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            deleted_at TEXT NULL,
+            deleted_by INTEGER NULL REFERENCES users(id)
         )
     ");
+    $remCols = array_map(fn($c) => strtolower((string)$c['name']), $pdo->query("PRAGMA table_info(student_remarks)")->fetchAll(PDO::FETCH_ASSOC));
+    if (!in_array('deleted_at', $remCols, true)) {
+        $pdo->exec("ALTER TABLE student_remarks ADD COLUMN deleted_at TEXT NULL");
+    }
+    if (!in_array('deleted_by', $remCols, true)) {
+        $pdo->exec("ALTER TABLE student_remarks ADD COLUMN deleted_by INTEGER NULL REFERENCES users(id)");
+    }
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_remarks_student ON student_remarks(student_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_remarks_created ON student_remarks(created_at)");
 

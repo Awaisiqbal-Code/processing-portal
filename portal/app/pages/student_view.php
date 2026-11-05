@@ -8,12 +8,7 @@ require_once __DIR__ . '/../drive_resolver.php';
 $driveAssets = resolve_student_drive_assets((int)$sid);
 $allDriveFiles = $driveAssets['files'] ?? [];
 
-$r = q('SELECT s.id, s.name, s.counselor, s.branch, s.intake, s.drive_link, s.meeting_link, s.drive_files_json,
-               s.consent, s.docs_checklist, s.initial_meeting, s.recorded_uploaded, s.second_meeting,
-               s.tax_meeting, s.offer, s.enrollment, s.visa,
-               s.follow_up_1, s.follow_up_2, s.follow_up_3,
-               s.email, s.portal_id, s.shortlisting, s.pending_docs_note,
-               s.officer_id, s.frontend_officer_id,
+$r = q('SELECT s.*,
                o.name AS officer_name,
                COALESCE(fo.name, s.frontend_officer_name) AS frontend_officer_name
         FROM students s
@@ -24,6 +19,8 @@ if (!$r) {
     if ($preview) { http_response_code(404); exit('Student not found.'); }
     logout_now('student'); flash('Your file could not be found. Contact the office.', 'bad'); redirect('student/login.php');
 }
+
+$studentApps = q("SELECT * FROM student_applications WHERE student_id = ? ORDER BY id ASC", [$sid])->fetchAll();
 
 $docs = [];
 foreach (q('SELECT doc_index, status, file_name, file_size, file_path FROM student_documents WHERE student_id = ?', [$sid]) as $d) {
@@ -338,13 +335,21 @@ if ($preview): ?>
     </section>
 
     <section class="panel">
-      <div class="panel-h"><h2>Your team</h2></div>
+      <div class="panel-h"><h2>Your team &amp; Academic Profile</h2></div>
       <div class="list">
+        <div class="li"><span>Destination Country</span><b><?= h($r['country'] ?: 'Italy') ?> <?= !empty($r['program_level']) ? '(' . h($r['program_level']) . ')' : '' ?></b></div>
         <div class="li"><span>Counselor</span><b><?= h($r['counselor'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Front-End Officer</span><b><?= h($r['frontend_officer_name'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Back-End Officer</span><b><?= h($r['officer_name'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Branch</span><b><?= h($r['branch']) ?></b></div>
         <div class="li"><span>Intake</span><b><?= h($r['intake']) ?></b></div>
+        <?php if (!empty($r['last_degree'])): ?><div class="li"><span>Last Degree</span><b><?= h($r['last_degree']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['gpa'])): ?><div class="li"><span>CGPA / Marks</span><b><?= h($r['gpa']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['ielts_score'])): ?><div class="li"><span>IELTS / Language</span><b><?= h($r['ielts_score']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['applied_for'])): ?><div class="li"><span>Applied For</span><b><?= h($r['applied_for']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['campus_france_status'])): ?><div class="li"><span>Campus France / Uni-Assist</span><b><?= h($r['campus_france_status']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['embassy_status'])): ?><div class="li"><span>Embassy Status</span><b><?= h($r['embassy_status']) ?></b></div><?php endif; ?>
+        <?php if (!empty($r['admission_secured'])): ?><div class="li"><span>Admission Secured</span><b><?= h($r['admission_secured']) ?></b></div><?php endif; ?>
       </div>
     </section>
     <?php if (!empty($r['shortlisting']) || !empty($r['portal_id']) || !empty($r['pending_docs_note'])): ?>
@@ -359,4 +364,56 @@ if ($preview): ?>
     <?php endif; ?>
   </div>
 </div>
+
+<?php if (!empty($studentApps)): ?>
+<section class="panel" style="margin-top:1.5rem;">
+  <div class="panel-h">
+    <div>
+      <h2>🏛 University Applications &amp; Shortlisted Programs (<?= count($studentApps) ?>)</h2>
+      <p>Live status of university applications submitted for <?= h($r['name']) ?></p>
+    </div>
+  </div>
+  <div class="tbl"><table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>University</th>
+        <th>Program / Course</th>
+        <th>Track / Type</th>
+        <th>Deadline &amp; Applied</th>
+        <th>Fee &amp; Nostrification</th>
+        <th>Status</th>
+        <th>Remarks</th>
+      </tr>
+    </thead>
+    <tbody>
+      <?php foreach ($studentApps as $idx => $app):
+          $pLink = safe_link($app['portal_link'] ?? null);
+          $appSt = (string)($app['status'] ?: 'Pending');
+      ?>
+        <tr>
+          <td class="num"><?= $idx + 1 ?></td>
+          <td>
+            <b><?= h($app['university'] ?: 'University') ?></b>
+            <?php if ($pLink && $isStaff): ?>
+              <div><a href="<?= h($pLink) ?>" target="_blank" rel="noopener noreferrer" class="small">🔗 Portal ↗</a></div>
+            <?php endif; ?>
+          </td>
+          <td><?= h($app['program'] ?: '—') ?></td>
+          <td><span class="pill sm"><?= h($app['application_type'] ?: $app['country']) ?></span></td>
+          <td class="small">
+            <?php if (!empty($app['deadline'])): ?><div>Deadline: <b><?= h($app['deadline']) ?></b></div><?php endif; ?>
+            <?php if (!empty($app['applied_date'])): ?><div>Applied: <?= h($app['applied_date']) ?></div><?php endif; ?>
+          </td>
+          <td class="small">
+            <?= h(trim(($app['application_fee'] ?? '') . (!empty($app['nostrification_status']) ? ' · Nostr: ' . $app['nostrification_status'] : '')) ?: '—') ?>
+          </td>
+          <td><span class="pill sm acc"><?= h($appSt) ?></span></td>
+          <td class="small muted"><?= h($app['remarks'] ?: '—') ?></td>
+        </tr>
+      <?php endforeach; ?>
+    </tbody>
+  </table></div>
+</section>
+<?php endif; ?>
 <?php page_end();

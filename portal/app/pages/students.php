@@ -46,6 +46,11 @@ $cntBs = (int)q("SELECT COUNT(*) FROM students s WHERE $w AND s.program_level = 
 $cntMs = (int)q("SELECT COUNT(*) FROM students s WHERE $w AND s.program_level = 'MS'", $p)->fetchColumn();
 $cntInc = (int)q("SELECT COUNT(*) FROM students s WHERE $w AND (s.program_level IS NULL OR s.program_level = '' OR s.country IS NULL OR s.country = '')", $p)->fetchColumn();
 
+$countryCounts = [];
+foreach (q("SELECT COALESCE(NULLIF(TRIM(s.country), ''), 'Not set') AS c_name, COUNT(*) AS cnt FROM students s WHERE $w GROUP BY c_name ORDER BY cnt DESC", $p)->fetchAll() as $cRow) {
+    $countryCounts[$cRow['c_name']] = (int)$cRow['cnt'];
+}
+
 // ---------- Request Filters & Parameters ----------
 $tab = strtolower(get('tab') ?: 'all');
 $fq = get('q');
@@ -169,6 +174,7 @@ $orderSql = match ($sort) {
 
 // Execute query
 $rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name,
+                  (SELECT COUNT(*) FROM student_applications sa WHERE sa.student_id = s.id) AS app_count,
                   (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
                   (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
                   (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name,
@@ -194,7 +200,7 @@ $rows = array_slice($rows, ($page - 1) * $per, $per);
 // Reference lists for filter dropdowns
 $officers = $admin ? q("SELECT id, name, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') ORDER BY department DESC, name ASC")->fetchAll() : [];
 $distinctCountries = q("SELECT DISTINCT country FROM students WHERE country IS NOT NULL AND country != '' ORDER BY country ASC")->fetchAll(PDO::FETCH_COLUMN);
-$counselorsList = q("SELECT id, name, username FROM users WHERE role = 'counselor' AND active = 1 ORDER BY name ASC")->fetchAll();
+$counselorsList = q("SELECT id, name, username FROM users WHERE (role = 'counselor' OR id IN (SELECT DISTINCT assigned_counselor_id FROM students WHERE assigned_counselor_id IS NOT NULL)) AND active = 1 ORDER BY name ASC")->fetchAll();
 $pmsLeadsList = q("SELECT id, name FROM users WHERE role = 'pms_lead' AND active = 1 ORDER BY name ASC")->fetchAll();
 
 $qs = function (array $over) {
@@ -236,14 +242,38 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </div>
     <div class="row-actions">
       <?php if ($admin): ?><a class="btn sm" href="<?= h(url('admin/export.php')) ?>">Download CSV</a><?php endif; ?>
-      <?php if ($canManage): ?><a class="btn sm primary" href="<?= h(url($base . '/student.php?new=1')) ?>">Add student</a><?php endif; ?>
+      <?php if ($canManage):
+          $addCountryParam = ($fc !== '' && $fc !== 'none') ? '&country=' . rawurlencode($fc) : '';
+          $addBtnLabel = ($fc !== '' && $fc !== 'none') ? '+ Add ' . $fc . ' Student' : '+ Add Student';
+      ?>
+        <a class="btn sm primary" href="<?= h(url($base . '/student.php?new=1' . $addCountryParam)) ?>"><?= h($addBtnLabel) ?></a>
+      <?php endif; ?>
     </div>
   </div>
 
+  <!-- Country Quick-Tabs -->
+  <div style="display:flex; gap:0.45rem; padding-bottom:0.65rem; margin-bottom:0.65rem; border-bottom:1px dashed var(--border); flex-wrap:wrap; align-items:center;">
+    <span class="small muted" style="font-weight:600; margin-right:0.25rem;">🌍 Country:</span>
+    <a href="<?= h($qs(['country' => '', 'page' => 1])) ?>" class="btn sm <?= $fc === '' ? 'primary' : 'ghost' ?>">
+      All Countries <span class="pill sm" style="margin-left:0.3rem;"><?= $cntAll ?></span>
+    </a>
+    <?php
+      $flagMap = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+      foreach ($countryCounts as $cName => $cCnt):
+          if ($cName === 'Not set') continue;
+          $flag = $flagMap[$cName] ?? '📍';
+    ?>
+      <a href="<?= h($qs(['country' => $cName, 'page' => 1])) ?>" class="btn sm <?= $fc === $cName ? 'primary' : 'ghost' ?>">
+        <?= $flag ?> <?= h($cName) ?> <span class="pill sm" style="margin-left:0.3rem;"><?= $cCnt ?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+
   <!-- Phase 3: Program Level Tabs (All | BS | MS | Incomplete) -->
-  <div style="display:flex; gap:0.5rem; border-bottom:1.5px solid var(--border); padding-bottom:0.6rem; margin-bottom:1.15rem; flex-wrap:wrap;">
+  <div style="display:flex; gap:0.5rem; border-bottom:1.5px solid var(--border); padding-bottom:0.6rem; margin-bottom:1.15rem; flex-wrap:wrap; align-items:center;">
+    <span class="small muted" style="font-weight:600; margin-right:0.25rem;">🎓 Degree:</span>
     <a href="<?= h($qs(['tab' => 'all', 'page' => 1])) ?>" class="btn sm <?= $tab === 'all' ? 'primary' : 'ghost' ?>">
-      All Students <span class="pill sm" style="margin-left:0.35rem;"><?= $cntAll ?></span>
+      All Degrees <span class="pill sm" style="margin-left:0.35rem;"><?= $cntAll ?></span>
     </a>
     <a href="<?= h($qs(['tab' => 'bs', 'page' => 1])) ?>" class="btn sm <?= $tab === 'bs' ? 'primary' : 'ghost' ?>">
       BS (Bachelors) <span class="pill sm" style="margin-left:0.35rem;"><?= $cntBs ?></span>
@@ -476,8 +506,24 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         </td>
         <td>
           <div style="display:flex; flex-direction:column; gap:0.2rem;">
-            <div><?= !empty($r['program_level']) ? '<span class="pill sm acc">' . h($r['program_level']) . '</span>' : '<span class="pill sm muted" style="opacity:0.6;">No Program</span>' ?></div>
-            <div><?= !empty($r['country']) ? '<span class="pill sm">' . h($r['country']) . '</span>' : '<span class="pill sm warn">No Country</span>' ?></div>
+            <div style="display:flex; gap:0.25rem; flex-wrap:wrap; align-items:center;">
+              <?= !empty($r['program_level']) ? '<span class="pill sm acc">' . h($r['program_level']) . '</span>' : '<span class="pill sm muted" style="opacity:0.6;">No Program</span>' ?>
+              <?= !empty($r['country']) ? '<span class="pill sm">' . h($r['country']) . '</span>' : '<span class="pill sm warn">No Country</span>' ?>
+            </div>
+            <?php if ((int)($r['app_count'] ?? 0) > 0): ?>
+              <div><a href="<?= h($editUrl . '#applications') ?>" class="pill sm ok" style="text-decoration:none; font-weight:600;">🏛 <?= (int)$r['app_count'] ?> Univ. App<?= (int)$r['app_count'] > 1 ? 's' : '' ?></a></div>
+            <?php endif; ?>
+            <?php if (!empty($r['applied_for']) && $r['applied_for'] !== ($r['program_level'] ?? '')): ?>
+              <div class="small muted" style="font-size:0.72rem;">Track: <b><?= h($r['applied_for']) ?></b></div>
+            <?php endif; ?>
+            <?php if (!empty($r['last_degree']) || !empty($r['gpa']) || !empty($r['ielts_score'])): ?>
+              <div class="small muted" style="font-size:0.72rem;">
+                <?= h(trim(($r['last_degree'] ?? '') . (!empty($r['gpa']) ? ' · GPA: ' . $r['gpa'] : '') . (!empty($r['ielts_score']) ? ' · IELTS: ' . $r['ielts_score'] : ''))) ?>
+              </div>
+            <?php endif; ?>
+            <?php if (!empty($r['campus_france_status'])): ?>
+              <div class="small muted" style="font-size:0.72rem;">CF: <b><?= h($r['campus_france_status']) ?></b></div>
+            <?php endif; ?>
           </div>
         </td>
         <td>

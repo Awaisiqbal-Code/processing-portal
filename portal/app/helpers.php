@@ -48,6 +48,26 @@ function safe_link(?string $u): ?string {
     return preg_match('#^https?://#i', $u) ? $u : null;
 }
 
+function time_ago(?string $ts): string {
+    if (!$ts) return '';
+    $t = strtotime($ts . (str_ends_with($ts, 'Z') ? '' : ' UTC'));
+    if (!$t) return $ts;
+    $diff = time() - $t;
+    if ($diff < 60) return 'just now';
+    if ($diff < 3600) return floor($diff / 60) . 'm ago';
+    if ($diff < 86400) return floor($diff / 3600) . 'h ago';
+    if ($diff < 2592000) return floor($diff / 86400) . 'd ago';
+    return fmt_date(substr($ts, 0, 10));
+}
+
+function drive_link_for_student(array $s): ?string {
+    return safe_link($s['drive_link'] ?? null);
+}
+
+function meeting_link_for_student(array $s): ?string {
+    return student_has_meeting($s) ? url('meeting.php?id=' . (int)$s['id']) : null;
+}
+
 /**
  * Resolves the valid recorded meeting or Zoom video URL for a student record.
  * Returns null if no actual meeting video/session link exists.
@@ -173,9 +193,12 @@ function railway_volume_status(): array {
     $dbPath = getenv('PORTAL_SQLITE') ?: (APP . '/portal.sqlite');
     $dataSqliteExists = is_file('/data/portal.sqlite');
     $isMounted = ($volPath !== '' && is_dir($volPath) && is_writable($volPath));
+    $isRailway = (bool)(getenv('RAILWAY_ENVIRONMENT') || getenv('RAILWAY_PROJECT_ID') || $isMounted);
     return [
         'volume_mount_path' => $volPath ?: null,
         'is_mounted'        => $isMounted,
+        'is_railway'        => $isRailway,
+        'data_dir_writable' => $isMounted,
         'data_sqlite_exists'=> $dataSqliteExists,
         'active_db_path'    => $dbPath,
         'backup_dir'        => ($isMounted ? rtrim($volPath, '/\\') . '/backups' : dirname(ROOT) . '/backups'),

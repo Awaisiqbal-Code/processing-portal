@@ -11,7 +11,7 @@ return [
     'db_pass' => 'CHANGE_ME_database_password',
 
     // Name shown in the header of every portal.
-    'app_name' => 'Processing Team Portal',
+    'app_name' => 'ScholarshipHive Edutancy',
 
     // Leave empty to detect automatically. If the portal lives in a
     // sub-folder and links break, set it, e.g. '/portal'.

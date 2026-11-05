@@ -34,7 +34,7 @@ function csv_cell($val): string {
 class PortalReportPDF extends FPDF {
     public string $reportTitle = 'REPORT';
     public string $reportSubtitle = '';
-    public string $footerNotice = 'Confidential · Processing Team Portal';
+    public string $footerNotice = 'Confidential · ScholarshipHive Edutancy';
     public string $generatedAt = '';
     
     function KeyValueRow(string $k1, string $v1, string $k2 = '', string $v2 = ''): void {
@@ -43,14 +43,14 @@ class PortalReportPDF extends FPDF {
     
     function Header(): void {
         $this->SetFont('Arial', 'B', 13);
-        $this->SetTextColor(30, 41, 59);
-        $this->Cell(120, 7, pdf_text('PROCESSING TEAM PORTAL'), 0, 0, 'L');
+        $this->SetTextColor(18, 48, 75); // Dark Navy #12304B
+        $this->Cell(120, 7, pdf_text('SCHOLARSHIPHIVE EDUTANCY'), 0, 0, 'L');
         $this->SetFont('Arial', '', 8);
-        $this->SetTextColor(100, 116, 139);
+        $this->SetTextColor(74, 101, 128);
         $this->Cell(0, 7, pdf_text('Generated: ' . date('d/m/Y H:i') . ' UTC'), 0, 1, 'R');
 
         $this->SetFont('Arial', 'B', 11);
-        $this->SetTextColor(37, 99, 235);
+        $this->SetTextColor(15, 93, 158); // Deep Academic Blue #0F5D9E
         $this->Cell(0, 6, pdf_text($this->reportTitle), 0, 1, 'L');
 
         if ($this->reportSubtitle !== '') {

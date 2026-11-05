@@ -6,8 +6,8 @@ $admin = is_admin_role($u['role']);
 $canManage = can_manage_student_lifecycle($u);
 $isCounselor = ($u['role'] === 'counselor');
 $base = $admin ? 'admin' : 'officer';
-$isNew = get('new') === '1' || post('mode') === 'new';
 $id = (int)(get('id') ?: post('id'));
+$isNew = get('new') === '1' || post('mode') === 'new' || ($id === 0 && get('country') !== '');
 $r = $isNew ? [] : find_student($u, $id);           // 404s if out of scope
 
 $officers = q("SELECT id, name, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') AND active = 1 ORDER BY CASE WHEN department = 'frontend' THEN 0 ELSE 1 END, name")->fetchAll();
@@ -154,6 +154,75 @@ if (is_post() && post('action') === 'upload_consent_doc') {
     redirect($base . "/student.php?id={$id}#consent");
 }
 
+// ---------- add university application (Staff only) ----------
+if (is_post() && post('action') === 'add_application') {
+    csrf_check();
+    if ($isCounselor) { http_response_code(403); exit('Access denied.'); }
+    $univ = trim((string)post('app_university'));
+    $prog = trim((string)post('app_program'));
+    if ($univ === '' && $prog === '') {
+        flash('Please enter a University or Program name.', 'bad');
+    } else {
+        q("INSERT INTO student_applications (
+               student_id, country, university, program, application_type, deadline, applied_date,
+               application_fee, nostrification_status, nostrification_fee, language_req,
+               portal_link, portal_id, portal_password, status, submitted_by, remarks, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            $id,
+            trim((string)(post('app_country') ?: ($r['country'] ?? 'Italy'))),
+            $univ ?: null,
+            $prog ?: null,
+            trim((string)post('app_type')) ?: null,
+            trim((string)post('app_deadline')) ?: null,
+            trim((string)post('app_applied_date')) ?: null,
+            trim((string)post('app_fee')) ?: null,
+            trim((string)post('app_nostrification_status')) ?: null,
+            trim((string)post('app_nostrification_fee')) ?: null,
+            trim((string)post('app_language_req')) ?: null,
+            trim((string)post('app_portal_link')) ?: null,
+            trim((string)post('app_portal_id')) ?: null,
+            trim((string)post('app_portal_password')) ?: null,
+            trim((string)(post('app_status') ?: 'Applied')),
+            trim((string)(post('app_submitted_by') ?: $u['name'])),
+            trim((string)post('app_remarks')) ?: null,
+            now(),
+        ]);
+        log_activity('student', $id, 'application_added', null, ['university' => $univ, 'program' => $prog], (int)$u['id']);
+        flash('University application added.');
+    }
+    redirect($base . "/student.php?id={$id}#applications");
+}
+
+// ---------- update university application status ----------
+if (is_post() && post('action') === 'update_application_status') {
+    csrf_check();
+    if ($isCounselor) { http_response_code(403); exit('Access denied.'); }
+    $appId = (int)post('app_id');
+    $newAppStatus = trim((string)post('app_status'));
+    $newAppRemarks = trim((string)post('app_remarks'));
+    q("UPDATE student_applications SET status = ?, remarks = ?, updated_at = ? WHERE id = ? AND student_id = ?", [
+        $newAppStatus ?: 'Pending',
+        $newAppRemarks !== '' ? $newAppRemarks : null,
+        now(),
+        $appId,
+        $id,
+    ]);
+    log_activity('student', $id, 'application_updated', null, ['app_id' => $appId, 'status' => $newAppStatus], (int)$u['id']);
+    flash('University application updated.');
+    redirect($base . "/student.php?id={$id}#applications");
+}
+
+// ---------- delete university application ----------
+if (is_post() && post('action') === 'delete_application') {
+    csrf_check();
+    if ($isCounselor) { http_response_code(403); exit('Access denied.'); }
+    $appId = (int)post('app_id');
+    q("DELETE FROM student_applications WHERE id = ? AND student_id = ?", [$appId, $id]);
+    log_activity('student', $id, 'application_deleted', null, ['app_id' => $appId], (int)$u['id']);
+    flash('University application removed.');
+    redirect($base . "/student.php?id={$id}#applications");
+}
+
 // ---------- save student profile fields ----------
 if (is_post() && post('action') === 'save') {
     csrf_check();
@@ -167,6 +236,7 @@ if (is_post() && post('action') === 'save') {
         foreach ($fields as $k => $f) {
             $type = $f[1];
             if ($type === 'officer' || $type === 'readonly_textarea') continue;
+            if (!$isNew && !array_key_exists($k, $_POST)) continue;
             $v = mb_substr(post($k), 0, $type === 'textarea' ? 5000 : 500);
             if ($type === 'yn' && !in_array($v, ['', 'Yes', 'No'], true)) $v = '';
             if ($type === 'select' && !in_array($v, $f[2], true)) $v = $r[$k] ?? '';
@@ -178,11 +248,15 @@ if (is_post() && post('action') === 'save') {
     if (!$data['name']) $errors[] = 'Enter the student name.';
 
     if ($admin) {
-        $oid = post('officer_id');
-        $data['officer_id'] = ($oid !== '' && in_array((int)$oid, $officerIds, true)) ? (int)$oid : null;
-        $foid = post('frontend_officer_id');
-        $data['frontend_officer_id'] = ($foid !== '' && in_array((int)$foid, $officerIds, true)) ? (int)$foid : null;
-        $data['frontend_officer_name'] = $data['frontend_officer_id'] ? ($officerMap[$data['frontend_officer_id']] ?? null) : null;
+        if (array_key_exists('officer_id', $_POST) || $isNew) {
+            $oid = post('officer_id');
+            $data['officer_id'] = ($oid !== '' && in_array((int)$oid, $officerIds, true)) ? (int)$oid : null;
+        }
+        if (array_key_exists('frontend_officer_id', $_POST) || $isNew) {
+            $foid = post('frontend_officer_id');
+            $data['frontend_officer_id'] = ($foid !== '' && in_array((int)$foid, $officerIds, true)) ? (int)$foid : null;
+            $data['frontend_officer_name'] = $data['frontend_officer_id'] ? ($officerMap[$data['frontend_officer_id']] ?? null) : null;
+        }
     } elseif ($isNew) {
         $myDept = q('SELECT COALESCE(department, "backend") FROM users WHERE id = ?', [(int)$u['id']])->fetchColumn();
         if ($myDept === 'frontend') {
@@ -203,6 +277,34 @@ if (is_post() && post('action') === 'save') {
                 $id = (int)$res['id'];
                 if (!empty(post('new_remark_text'))) {
                     add_student_remark($u, $id, (string)post('new_remark_text'));
+                }
+                // Save any initial university applications submitted on creation
+                $initUnivs = $_POST['init_app_university'] ?? [];
+                $initProgs = $_POST['init_app_program'] ?? [];
+                $initTypes = $_POST['init_app_type'] ?? [];
+                $initDeadlines = $_POST['init_app_deadline'] ?? [];
+                $initFees  = $_POST['init_app_fee'] ?? [];
+                $initLinks = $_POST['init_app_portal_link'] ?? [];
+                $initStatuses = $_POST['init_app_status'] ?? [];
+                if (is_array($initUnivs)) {
+                    foreach ($initUnivs as $aIdx => $uVal) {
+                        $uVal = trim((string)$uVal);
+                        $pVal = trim((string)($initProgs[$aIdx] ?? ''));
+                        if ($uVal === '' && $pVal === '') continue;
+                        q("INSERT INTO student_applications (student_id, country, university, program, application_type, deadline, application_fee, portal_link, status, submitted_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                            $id,
+                            $data['country'] ?? 'Italy',
+                            $uVal ?: null,
+                            $pVal ?: null,
+                            trim((string)($initTypes[$aIdx] ?? '')) ?: null,
+                            trim((string)($initDeadlines[$aIdx] ?? '')) ?: null,
+                            trim((string)($initFees[$aIdx] ?? '')) ?: null,
+                            trim((string)($initLinks[$aIdx] ?? '')) ?: null,
+                            trim((string)($initStatuses[$aIdx] ?? '')) ?: 'Applied',
+                            $u['name'],
+                            now(),
+                        ]);
+                    }
                 }
             }
         } else {
@@ -313,6 +415,7 @@ if (!$isNew) {
     }
     $customDocs = q('SELECT * FROM custom_documents WHERE student_id = ? ORDER BY id ASC', [$id])->fetchAll();
     $studentRemarksList = get_student_remarks($id);
+    $studentApps = q("SELECT * FROM student_applications WHERE student_id = ? ORDER BY id ASC", [$id])->fetchAll();
     
     // Consent documents & templates
     $consentDocs = q("SELECT cd.*, u.name AS uploader_name FROM consent_documents cd LEFT JOIN users u ON u.id = cd.uploaded_by WHERE cd.student_id = ? ORDER BY cd.created_at DESC", [$id])->fetchAll();
@@ -324,13 +427,55 @@ if (!$isNew) {
     $activityEntries = q("SELECT al.*, u.name AS actor_name, u.role AS actor_role FROM activity_logs al LEFT JOIN users u ON u.id = al.user_id WHERE al.entity_type = 'student' AND al.entity_id = ? ORDER BY al.created_at DESC LIMIT 50", [$id])->fetchAll();
 } else {
     $customDocs = [];
+    $studentApps = [];
 }
 if ($errors) foreach (DOCS as $i => $_) $docs[$i] = post('doc_' . $i);
 $login = (!$isNew && $admin) ? q("SELECT id, username, active, last_login FROM users WHERE student_id = ?", [$id])->fetch() : null;
 
-page_start($isNew ? 'Add student' : $r['name'], $u, PORTALS[$u['role']]['label']);
+$activeCountry = trim((string)(get('country') ?: post('country') ?: ($r['country'] ?? 'Italy')));
+if ($activeCountry === '') $activeCountry = 'Italy';
+if ($isNew) {
+    $r['country'] = $activeCountry;
+    if (empty($r['program_level'])) $r['program_level'] = 'MS';
+    if (empty($r['received_date'])) $r['received_date'] = today();
+    if (empty($r['officer_id'])) {
+        $defaultOfficerUser = match ($activeCountry) {
+            'France'                   => 'muhammad.usman',
+            'Germany'                  => 'nabeel',
+            'Czech Republic', 'Austria'=> 'hamza',
+            'China'                    => 'zeeshan',
+            default                    => null,
+        };
+        if ($defaultOfficerUser) {
+            $defOid = q("SELECT id FROM users WHERE username = ? LIMIT 1", [$defaultOfficerUser])->fetchColumn();
+            if ($defOid) $r['officer_id'] = (int)$defOid;
+        }
+    }
+}
+$activeFieldGroups = country_field_groups($activeCountry);
+
+page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u['role']]['label']);
 ?>
-<p class="small"><a href="<?= h(url($base . '/students.php')) ?>">← Back to students</a></p>
+<p class="small"><a href="<?= h(url($base . '/students.php' . ($activeCountry ? '?country=' . rawurlencode($activeCountry) : ''))) ?>">← Back to <?= h($activeCountry) ?> students</a></p>
+
+<!-- Country Sheet Entry Format Selector Bar -->
+<div style="background:var(--surface); border:1.5px solid var(--border); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1.15rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.65rem;">
+  <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+    <span class="small" style="font-weight:700; color:var(--fg); margin-right:0.3rem;">📋 Sheet Format / Country:</span>
+    <?php
+      $cFlags = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+      foreach (SUPPORTED_COUNTRIES as $cOpt):
+          $switchHref = $isNew
+              ? url($base . '/student.php?new=1&country=' . rawurlencode($cOpt))
+              : url($base . '/student.php?id=' . (int)$id . '&country=' . rawurlencode($cOpt));
+    ?>
+      <a href="<?= h($switchHref) ?>" class="btn sm <?= $activeCountry === $cOpt ? 'primary' : 'ghost' ?>" style="font-weight:600;">
+        <?= $cFlags[$cOpt] ?? '📍' ?> <?= h($cOpt) ?> Sheet
+      </a>
+    <?php endforeach; ?>
+  </div>
+  <span class="small muted">Form fields automatically match the <b><?= h($activeCountry) ?></b> centralized processing sheet</span>
+</div>
 
 <!-- Branch 30% Legacy Data Error Flag (If unresolved in record) -->
 <?php if (!$isNew && (($r['branch'] ?? '') === '30%')): ?>
@@ -462,7 +607,7 @@ page_start($isNew ? 'Add student' : $r['name'], $u, PORTALS[$u['role']]['label']
   <input type="hidden" name="mode" value="<?= $isNew ? 'new' : 'edit' ?>">
   <input type="hidden" name="id" value="<?= (int)$id ?>">
 
-  <?php foreach (FIELD_GROUPS as $group => $fields): ?>
+  <?php foreach ($activeFieldGroups as $group => $fields): ?>
   <fieldset><legend><?= h($group) ?></legend><div class="fields">
     <?php foreach ($fields as $k => $f):
         $v = (string)($r[$k] ?? '');
@@ -482,7 +627,7 @@ page_start($isNew ? 'Add student' : $r['name'], $u, PORTALS[$u['role']]['label']
               <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?>><?php foreach (['' => 'Not set', 'Yes' => 'Yes', 'No' => 'No'] as $ov => $ol): ?><option value="<?= $ov ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ol ?></option><?php endforeach; ?></select>
         <?php break;
         case 'select': ?>
-              <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?>><?php foreach ($f[2] as $ov): ?><option value="<?= h($ov) ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ov === '' ? 'Not set' : h($ov) ?></option><?php endforeach; ?></select>
+              <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?> <?= ($k === 'country' && $isNew) ? 'onchange="window.location.href=\'?new=1&country=\'+encodeURIComponent(this.value)"' : '' ?>><?php foreach ($f[2] as $ov): ?><option value="<?= h($ov) ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ov === '' ? 'Not set' : h($ov) ?></option><?php endforeach; ?></select>
         <?php break;
         case 'readonly_textarea': ?>
               <textarea rows="2" readonly disabled style="background:var(--sunk); color:var(--muted);"><?= h($v) ?></textarea>
@@ -509,6 +654,31 @@ page_start($isNew ? 'Add student' : $r['name'], $u, PORTALS[$u['role']]['label']
     <?php endforeach; ?>
   </div></fieldset>
   <?php endforeach; ?>
+
+  <?php if ($isNew): ?>
+  <fieldset><legend>🏛 Initial University Applications &amp; Remarks (<?= h($activeCountry) ?> Sheet)</legend>
+    <p class="muted small">Enter shortlisted or applied universities and any initial remarks for this <?= h($activeCountry) ?> student.</p>
+    <div style="display:flex; flex-direction:column; gap:0.6rem; margin-bottom:0.85rem;">
+      <?php for ($appRow = 1; $appRow <= 3; $appRow++): ?>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:0.5rem; background:var(--sunk); padding:0.6rem 0.75rem; border-radius:6px; border:1px solid var(--border);">
+        <label class="f" style="margin:0;"><span>University #<?= $appRow ?></span><input name="init_app_university[]" placeholder="University name"></label>
+        <label class="f" style="margin:0;"><span>Program / Course</span><input name="init_app_program[]" placeholder="e.g. MSc Data Science"></label>
+        <label class="f" style="margin:0;"><span>Track / Type</span><input name="init_app_type[]" placeholder="Campus France / Uni-Assist / Direct"></label>
+        <label class="f" style="margin:0;"><span>Deadline</span><input name="init_app_deadline[]" placeholder="YYYY-MM-DD"></label>
+        <label class="f" style="margin:0;"><span>Application Fee</span><input name="init_app_fee[]" placeholder="e.g. 60 EUR"></label>
+        <label class="f" style="margin:0;"><span>Portal URL</span><input name="init_app_portal_link[]" placeholder="https://..."></label>
+        <label class="f" style="margin:0;"><span>Status</span><input name="init_app_status[]" value="Shortlisted" placeholder="Applied / Shortlisted"></label>
+      </div>
+      <?php endfor; ?>
+    </div>
+    <div class="fields">
+      <label class="f wide">
+        <span>Initial Remark / Last Contacted Note</span>
+        <textarea name="new_remark_text" rows="2" placeholder="Enter initial remark for this student..."></textarea>
+      </label>
+    </div>
+  </fieldset>
+  <?php endif; ?>
 
   <fieldset><legend>Documents &amp; Attachments</legend>
     <p class="muted small">Update document statuses and view, download, or upload verified document files.</p>
@@ -572,6 +742,142 @@ page_start($isNew ? 'Add student' : $r['name'], $u, PORTALS[$u['role']]['label']
 </form>
 
 <?php if (!$isNew): ?>
+<!-- Multi-Country University Applications & Shortlisted Programs Section -->
+<section class="panel" id="applications" style="margin-top:1.5rem;">
+  <div class="panel-h">
+    <div>
+      <h2>🏛 University Applications &amp; Shortlisted Programs (<?= count($studentApps) ?>)</h2>
+      <p>Track university applications, deadlines, fees, nostrification, and application portal credentials for <?= h($r['name']) ?> (<?= h($r['country'] ?: 'Italy') ?>).</p>
+    </div>
+    <div class="row-actions">
+      <a class="btn sm ghost" href="<?= h(url($base . '/programs.php?country=' . rawurlencode((string)($r['country'] ?? '')))) ?>">Browse University Programs Directory →</a>
+    </div>
+  </div>
+
+  <?php if (empty($studentApps)): ?>
+    <div class="empty" style="margin-bottom:1rem;">No university applications recorded yet for this student.</div>
+  <?php else: ?>
+    <div class="tbl" style="margin-bottom:1.25rem;"><table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>University &amp; Program</th>
+          <th>Type / Track</th>
+          <th>Deadline &amp; Applied</th>
+          <th>Fees &amp; Nostrification</th>
+          <th>Portal &amp; Credentials</th>
+          <th>Submitted By</th>
+          <th>Status &amp; Remarks</th>
+          <?php if (!$isCounselor): ?><th>Action</th><?php endif; ?>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($studentApps as $idx => $app):
+            $pLink = safe_link($app['portal_link'] ?? null);
+            $appSt = (string)($app['status'] ?: 'Pending');
+            $stLower = strtolower($appSt);
+            $stPill = (str_contains($stLower, 'admit') || str_contains($stLower, 'offer') || str_contains($stLower, 'accept') || str_contains($stLower, 'done') || str_contains($stLower, 'applied') || str_contains($stLower, 'submit')) ? 'ok' : ((str_contains($stLower, 'reject') || str_contains($stLower, 'refus')) ? 'bad' : 'acc');
+        ?>
+          <tr>
+            <td class="num"><?= $idx + 1 ?></td>
+            <td>
+              <b><?= h($app['university'] ?: 'University') ?></b>
+              <?php if (!empty($app['program'])): ?>
+                <div class="small" style="color:var(--fg); margin-top:0.15rem;"><?= h($app['program']) ?></div>
+              <?php endif; ?>
+              <?php if (!empty($app['language_req'])): ?>
+                <div class="small muted">Lang: <?= h($app['language_req']) ?></div>
+              <?php endif; ?>
+            </td>
+            <td class="small">
+              <span class="pill sm"><?= h($app['country'] ?: ($r['country'] ?? '')) ?></span>
+              <?php if (!empty($app['application_type'])): ?>
+                <div class="muted" style="margin-top:0.2rem;"><?= h($app['application_type']) ?></div>
+              <?php endif; ?>
+            </td>
+            <td class="small">
+              <?php if (!empty($app['deadline'])): ?><div><span class="muted">Deadline:</span> <b><?= h($app['deadline']) ?></b></div><?php endif; ?>
+              <?php if (!empty($app['applied_date'])): ?><div><span class="muted">Applied:</span> <?= h($app['applied_date']) ?></div><?php endif; ?>
+              <?php if (empty($app['deadline']) && empty($app['applied_date'])): ?><span class="muted">—</span><?php endif; ?>
+            </td>
+            <td class="small">
+              <?php if (!empty($app['application_fee'])): ?><div><span class="muted">Fee:</span> <b><?= h($app['application_fee']) ?></b></div><?php endif; ?>
+              <?php if (!empty($app['nostrification_status'])): ?><div><span class="muted">Nostr.:</span> <?= h($app['nostrification_status']) ?></div><?php endif; ?>
+              <?php if (!empty($app['nostrification_fee'])): ?><div><span class="muted">Nostr. Fee:</span> <?= h($app['nostrification_fee']) ?></div><?php endif; ?>
+              <?php if (empty($app['application_fee']) && empty($app['nostrification_status'])): ?><span class="muted">—</span><?php endif; ?>
+            </td>
+            <td class="small">
+              <?php if ($pLink): ?>
+                <div><a href="<?= h($pLink) ?>" target="_blank" rel="noopener noreferrer" class="btn sm" style="padding:0.1rem 0.45rem; font-size:0.74rem;">🔗 Open Portal ↗</a></div>
+              <?php elseif (!empty($app['portal_link'])): ?>
+                <div><?= h($app['portal_link']) ?></div>
+              <?php endif; ?>
+              <?php if (!empty($app['portal_id'])): ?><div><span class="muted">ID:</span> <code><?= h($app['portal_id']) ?></code></div><?php endif; ?>
+              <?php if (!empty($app['portal_password'])): ?><div><span class="muted">Pass:</span> <code><?= h($app['portal_password']) ?></code></div><?php endif; ?>
+            </td>
+            <td class="small"><?= h($app['submitted_by'] ?: '—') ?></td>
+            <td>
+              <?php if (!$isCounselor): ?>
+                <form method="post" style="display:flex; flex-direction:column; gap:0.25rem; min-width:170px;">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="update_application_status">
+                  <input type="hidden" name="id" value="<?= (int)$id ?>">
+                  <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
+                  <div style="display:flex; gap:0.25rem;">
+                    <input name="app_status" value="<?= h($appSt) ?>" placeholder="Status..." style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
+                    <button class="btn sm" type="submit" style="padding:0.15rem 0.45rem; font-size:0.74rem;">Save</button>
+                  </div>
+                  <input name="app_remarks" value="<?= h($app['remarks'] ?? '') ?>" placeholder="Remarks / notes..." style="font-size:0.75rem; padding:0.18rem 0.4rem;">
+                </form>
+              <?php else: ?>
+                <span class="pill sm <?= $stPill ?>"><?= h($appSt) ?></span>
+                <?php if (!empty($app['remarks'])): ?><div class="small muted" style="margin-top:0.2rem;"><?= h($app['remarks']) ?></div><?php endif; ?>
+              <?php endif; ?>
+            </td>
+            <?php if (!$isCounselor): ?>
+              <td>
+                <form method="post" onsubmit="return confirm('Remove this university application?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete_application">
+                  <input type="hidden" name="id" value="<?= (int)$id ?>">
+                  <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
+                  <button class="btn sm bad" type="submit" style="padding:0.15rem 0.45rem; font-size:0.74rem;" title="Delete Application">🗑</button>
+                </form>
+              </td>
+            <?php endif; ?>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table></div>
+  <?php endif; ?>
+
+  <?php if (!$isCounselor): ?>
+  <details style="background:var(--sunk); border:1px solid var(--border); border-radius:6px; padding:0.85rem 1rem;">
+    <summary style="cursor:pointer; font-weight:600; font-size:0.9rem;">➕ Add New University Application for <?= h($r['name']) ?></summary>
+    <form method="post" class="fields" style="margin-top:0.85rem;">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="add_application">
+      <input type="hidden" name="id" value="<?= (int)$id ?>">
+      <input type="hidden" name="app_country" value="<?= h($r['country'] ?: 'Italy') ?>">
+      <label class="f"><span>University Name *</span><input name="app_university" required placeholder="e.g. University of Paris-Saclay, TU Dresden, CZU"></label>
+      <label class="f"><span>Program / Course *</span><input name="app_program" placeholder="e.g. MSc Data Science, BSc Economics"></label>
+      <label class="f"><span>Application Track / Type</span><input name="app_type" placeholder="e.g. Campus France, Uni-Assist, Direct"></label>
+      <label class="f"><span>Status</span><input name="app_status" value="Applied" placeholder="Applied / Under Review / Offer Received"></label>
+      <label class="f"><span>Deadline</span><input name="app_deadline" placeholder="e.g. 2026-05-30"></label>
+      <label class="f"><span>Applied Date</span><input name="app_applied_date" placeholder="e.g. 2026-03-15"></label>
+      <label class="f"><span>Application Fee</span><input name="app_fee" placeholder="e.g. 60 EUR - Paid"></label>
+      <label class="f"><span>Nostrification Status</span><input name="app_nostrification_status" placeholder="e.g. Paid / Waived / Pending"></label>
+      <label class="f"><span>Portal URL</span><input name="app_portal_link" placeholder="https://..."></label>
+      <label class="f"><span>Portal Login / ID</span><input name="app_portal_id" placeholder="Username or ID"></label>
+      <label class="f"><span>Portal Password</span><input name="app_portal_password" placeholder="Portal password"></label>
+      <label class="f"><span>Submitted By</span><input name="app_submitted_by" value="<?= h($u['name']) ?>"></label>
+      <label class="f wide"><span>Application Remarks / Notes</span><input name="app_remarks" placeholder="Any notes on documents, interview, or offer status..."></label>
+      <div class="f"><span>&nbsp;</span><button class="btn primary sm" type="submit">Add University Application</button></div>
+    </form>
+  </details>
+  <?php endif; ?>
+</section>
+
 <!-- Phase 3: Signed Student Consent Documents Section -->
 <section class="panel" id="consent" style="margin-top:1.5rem;">
   <div class="panel-h">

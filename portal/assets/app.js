@@ -13,13 +13,10 @@
   }
 
   function getEffectiveTheme() {
-    var current = document.documentElement.getAttribute('data-theme');
-    if (current === 'light' || current === 'dark') return current;
     var stored = getStoredTheme();
     if (stored) return stored;
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
+    var current = document.documentElement.getAttribute('data-theme');
+    if (current === 'light' || current === 'dark') return current;
     return 'light';
   }
 

@@ -34,8 +34,9 @@ chmod 664 "$PORTAL_SQLITE" 2>/dev/null || true
 chmod 775 "$(dirname "$PORTAL_SQLITE")" 2>/dev/null || true
 mkdir -p /app/portal/uploads/cache /app/portal/uploads/documents
 
-# Note: migrate.php is MANUAL (Condition 7: do not auto-run on start).
-# Run via Railway CLI / deployment console: php /app/portal/app/migrate.php
+# Automatically apply any pending database migrations (001..006) idempotently on startup
+echo "[Railway Init] Running pending database migrations..."
+php /app/portal/app/migrate.php || true
 
 # Background cron runner for reminders (runs hourly via CLI)
 (

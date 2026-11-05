@@ -17,6 +17,22 @@ $refused = count(array_filter($rows, fn($r) => $r['visa'] === 'Refused'));
 $due = due_list($rows);
 $dueNow = count(array_filter($due, fn($d) => $d['date'] <= today()));
 
+$isDocNoteOpen = function (array $r): bool {
+    $note = strtolower(trim((string)($r['pending_docs_note'] ?? '')));
+    return $note !== '' && !in_array($note, ['n/a', 'none', 'nil', 'complete', 'completed', 'all complete', 'done', '-'], true);
+};
+$isStudentPendingAny = function (array $r) use ($isDocNoteOpen): bool {
+    return ($r['consent'] ?? '') !== 'Yes'
+        || ($r['docs_checklist'] ?? '') !== 'Yes'
+        || $isDocNoteOpen($r)
+        || ($r['initial_meeting'] ?? '') !== 'Yes'
+        || !empty($r['pending_since']);
+};
+$pendingTotalCases = count(array_filter($rows, $isStudentPendingAny));
+$pendingDocsCases  = count(array_filter($rows, fn($r) => ($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)));
+$pendingConsents   = count(array_filter($rows, fn($r) => ($r['consent'] ?? '') !== 'Yes'));
+$pendingMeetings   = count(array_filter($rows, fn($r) => ($r['initial_meeting'] ?? '') !== 'Yes'));
+
 if ($u['role'] === 'counselor') {
     // Dedicated Counselor Workspace Landing Page
     $tab = strtolower((string)(get('tab') ?: 'all'));
@@ -56,13 +72,16 @@ if ($u['role'] === 'counselor') {
     page_start('Counselor Workspace · Dashboard', $u, PORTALS['counselor']['label']);
     ?>
 
-    <div class="panel-h" style="margin-bottom:1.25rem;">
+    <div class="brand-hero" style="margin-bottom:1.25rem;">
       <div>
+        <div style="font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#74C3E4; margin-bottom:2px;">ScholarshipHive Edutancy · Counselor Advisory</div>
         <h1>Welcome, <?= h($u['name']) ?></h1>
-        <p>Counselor Workspace: Read-only overview of your assigned student caseload. Monitor progress, review action badges, upload signed consents, and add internal remarks.</p>
+        <p>Monitor your assigned students, track pending documents &amp; stages, upload signed consent forms, and add counselor remarks.</p>
+        <div class="brand-promise">“Guiding every student's journey with clarity, honesty, and expertise.”</div>
       </div>
       <div class="row-actions">
-        <a class="btn sm primary" href="<?= h(url('officer/students.php')) ?>">Open Full Student Table →</a>
+        <a class="btn sm" style="background:rgba(255,255,255,0.14); color:#FFFFFF; border-color:rgba(116,195,228,0.5);" href="<?= h(url('officer/pending.php')) ?>">⏳ Pending Tracker</a>
+        <a class="btn sm primary" style="background:#1392CB; border-color:#74C3E4;" href="<?= h(url('officer/students.php')) ?>">Open Full Student Table &rarr;</a>
       </div>
     </div>
 
@@ -221,15 +240,95 @@ if ($u['role'] === 'counselor') {
 
 page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 ?>
-<h1><?= $admin ? 'Team overview' : 'Hello, ' . h($u['name']) ?></h1>
+<div class="brand-hero">
+  <div>
+    <div style="font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:#74C3E4; margin-bottom:3px;">
+      ScholarshipHive Edutancy · <?= h(PORTALS[$u['role']]['label']) ?>
+    </div>
+    <h1><?= $admin ? 'Global Operations & Team Overview' : 'Welcome, ' . h($u['name']) ?></h1>
+    <p>Empowering ambitious students to unlock global education opportunities through trusted guidance and scholarship expertise.</p>
+    <div class="values-strip">
+      <span class="value-chip">🇮🇹 Italy</span>
+      <span class="value-chip">🇫🇷 France</span>
+      <span class="value-chip">🇩🇪 Germany</span>
+      <span class="value-chip">🇨🇿 Czech Republic</span>
+      <span class="value-chip">🇨🇳 China</span>
+      <span class="value-chip">🇦🇹 Austria</span>
+    </div>
+  </div>
+  <div class="row-actions">
+    <a class="btn sm" style="background:rgba(255,255,255,0.14); color:#FFFFFF; border-color:rgba(116,195,228,0.5);" href="<?= h(url($base . '/pending.php')) ?>">⏳ Open Pending Tracker &rarr;</a>
+    <a class="btn sm primary" style="background:#1392CB; border-color:#74C3E4;" href="<?= h(url($base . '/students.php')) ?>">Manage All Students &rarr;</a>
+  </div>
+</div>
 
 <div class="kpis">
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php')) ?>"><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><?= $thisMonth ?> added this month · Click to view</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Consent, checklist or first meeting open</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=offers')) ?>"><div class="l">Offers received</div><div class="v"><?= $offers ?></div><div class="s"><?= $n ? round($offers / $n * 100) : 0 ?>% of students</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused</div></a>
+  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Docs: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · Meet: <?= $pendingMeetings ?> &rarr;</div></a>
+  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> non-Italy offers</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="#followups-panel"><div class="l">Follow-ups due</div><div class="v <?= $dueNow ? 'bad-t' : '' ?>"><?= $dueNow ?></div><div class="s">Today or overdue</div></a>
 </div>
+
+<?php
+  $countryStats = [];
+  $flagMap = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+  foreach ($rows as $r) {
+      $cName = trim((string)($r['country'] ?? '')) ?: 'Other';
+      if (!isset($countryStats[$cName])) {
+          $countryStats[$cName] = ['total' => 0, 'bs' => 0, 'ms' => 0, 'pending_docs' => 0, 'offers' => 0];
+      }
+      $countryStats[$cName]['total']++;
+      if (($r['program_level'] ?? '') === 'BS') $countryStats[$cName]['bs']++;
+      if (($r['program_level'] ?? '') === 'MS') $countryStats[$cName]['ms']++;
+      if (($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)) $countryStats[$cName]['pending_docs']++;
+      if (($r['offer'] ?? '') === 'Yes') $countryStats[$cName]['offers']++;
+  }
+  uasort($countryStats, fn($a, $b) => $b['total'] <=> $a['total']);
+  $appCountsByCountry = [];
+  foreach (q("SELECT country, COUNT(*) AS cnt FROM student_applications GROUP BY country")->fetchAll() as $ar) {
+      $appCountsByCountry[$ar['country']] = (int)$ar['cnt'];
+  }
+?>
+<section class="panel" style="margin-bottom:1.25rem;">
+  <div class="panel-h">
+    <div>
+      <h2>🌍 Multi-Country Operations Overview</h2>
+      <p>Click any destination country to view and manage its students, officers, pending items, and university applications</p>
+    </div>
+    <div class="row-actions">
+      <a class="btn sm" href="<?= h(url($base . '/pending.php')) ?>">⏳ Full Pending Breakdown &rarr;</a>
+      <a class="btn sm primary" href="<?= h(url($base . '/programs.php')) ?>">🏛 University Programs Directory &rarr;</a>
+    </div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(195px, 1fr)); gap:0.85rem;">
+    <?php foreach ($countryStats as $cName => $st):
+        $flag = $flagMap[$cName] ?? '📍';
+        $appsCnt = $appCountsByCountry[$cName] ?? 0;
+    ?>
+      <div style="background:var(--sunk); border:1.5px solid var(--border); border-radius:8px; padding:0.9rem 1rem; display:flex; flex-direction:column; gap:0.35rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <a href="<?= h(url($base . '/students.php?country=' . rawurlencode($cName))) ?>" style="text-decoration:none; color:inherit;">
+            <b style="font-size:1rem;"><?= $flag ?> <?= h($cName) ?></b>
+          </a>
+          <a href="<?= h(url($base . '/students.php?country=' . rawurlencode($cName))) ?>" class="pill sm acc" style="text-decoration:none;"><?= $st['total'] ?> students</a>
+        </div>
+        <div class="small muted">
+          BS: <b><?= $st['bs'] ?></b> &middot; MS: <b><?= $st['ms'] ?></b>
+          <?php if ($st['offers'] > 0): ?> &middot; Offers: <b><?= $st['offers'] ?></b><?php endif; ?>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.1rem;">
+          <a href="<?= h(url($base . '/pending.php?country=' . rawurlencode($cName))) ?>" class="small" style="color:var(--warn, #f59e0b); font-weight:600; text-decoration:underline;">
+            ⏳ <?= $st['pending_docs'] ?> Pending Docs &rarr;
+          </a>
+          <?php if ($appsCnt > 0): ?>
+            <span class="small" style="color:var(--accent); font-weight:600;">🏛 <?= $appsCnt ?> Apps</span>
+          <?php endif; ?>
+        </div>
+      </div>
+    <?php endforeach; ?>
+  </div>
+</section>
 
 <div class="grid2">
 <?php if ($admin):
@@ -237,18 +336,21 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   <section class="panel">
     <div class="panel-h">
       <div>
-        <h2>Students per processing officer (Front End & Back End)</h2>
-        <p>Click an officer to open their dedicated profile and workspace</p>
+        <h2>Students &amp; Pending Workload per Processing Officer</h2>
+        <p>Click an officer or any pending count to open their detailed pending breakdown</p>
       </div>
       <div class="row-actions">
-        <a class="btn sm primary" href="<?= h(url('admin/officers.php')) ?>">View All Officers Overview →</a>
+        <a class="btn sm" href="<?= h(url('admin/pending.php')) ?>">⏳ Officer Pending Matrix &rarr;</a>
+        <a class="btn sm primary" href="<?= h(url('admin/officers.php')) ?>">All Officers &rarr;</a>
       </div>
     </div>
     <div class="tbl"><table>
-      <thead><tr><th>Officer & Team</th><th>Students</th><th>Offers</th><th>Visa granted</th><th>Follow-ups due</th><th>Workspace</th></tr></thead>
+      <thead><tr><th>Officer &amp; Team</th><th>Students</th><th>Pending Docs</th><th>Pending Stages</th><th>Follow-ups due</th><th>Workspace</th></tr></thead>
       <tbody>
       <?php foreach ($officers as $o):
           $mine = array_filter($rows, fn($r) => (int)$r['officer_id'] === (int)$o['id'] || (int)($r['frontend_officer_id'] ?? 0) === (int)$o['id']);
+          $minePendingDocs = count(array_filter($mine, fn($r) => ($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)));
+          $minePendingAny  = count(array_filter($mine, $isStudentPendingAny));
           $d = count(array_filter(due_list($mine), fn($x) => $x['date'] <= today())); ?>
         <tr>
           <td>
@@ -256,18 +358,31 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
             <span class="pill <?= $o['department'] === 'frontend' ? 'acc' : '' ?>" style="font-size:0.7rem; margin-left:0.25rem;"><?= $o['department'] === 'frontend' ? 'Front End' : 'Back End' ?></span>
             <?= $o['active'] ? '' : ' <span class="pill">Inactive</span>' ?>
           </td>
-          <td class="num"><a href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>"><?= count($mine) ?></a></td>
-          <td class="num"><?= count(array_filter($mine, fn($r) => $r['offer'] === 'Yes')) ?></td>
-          <td class="num"><?= count(array_filter($mine, fn($r) => $r['visa'] === 'Granted')) ?></td>
+          <td class="num"><a href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>"><b><?= count($mine) ?></b></a></td>
+          <td class="num">
+            <a class="pill sm <?= $minePendingDocs > 0 ? 'bad' : 'ok' ?>" href="<?= h(url('admin/pending.php?officer=' . $o['id'] . '&cat=docs#student-pending-list')) ?>" style="text-decoration:none;">
+              <?= $minePendingDocs ?>
+            </a>
+          </td>
+          <td class="num">
+            <a class="pill sm <?= $minePendingAny > 0 ? 'warn' : 'ok' ?>" href="<?= h(url('admin/pending.php?officer=' . $o['id'] . '&cat=all#student-pending-list')) ?>" style="text-decoration:none;">
+              <?= $minePendingAny ?>
+            </a>
+          </td>
           <td><span class="pill <?= $d ? 'bad' : 'ok' ?>"><?= $d ?></span></td>
-          <td><a class="btn sm" href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>">Open Profile →</a></td>
+          <td>
+            <div style="display:flex; gap:0.3rem;">
+              <a class="btn sm" href="<?= h(url('admin/pending.php?officer=' . $o['id'])) ?>">⏳ Pending</a>
+              <a class="btn sm ghost" href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>">Profile &rarr;</a>
+            </div>
+          </td>
         </tr>
       <?php endforeach;
-          $none = count(array_filter($rows, fn($r) => !$r['officer_id'] || empty($r['frontend_officer_id'])));
+          $none = count(array_filter($rows, fn($r) => !$r['officer_id'] && empty($r['frontend_officer_id'])));
           if ($none): ?>
         <tr><td><a href="<?= h(url('admin/officers.php?officer=none')) ?>">Unassigned (FE/BE)</a></td><td class="num"><?= $none ?></td><td></td><td></td><td></td><td><a class="btn sm bad" href="<?= h(url('admin/officers.php?officer=none')) ?>">Assign</a></td></tr>
       <?php endif; ?>
-        <tr class="total"><td><a href="<?= h(url('admin/officers.php')) ?>">Total Unique Students</a></td><td class="num"><?= $n ?></td><td class="num"><?= $offers ?></td><td class="num"><?= $granted ?></td><td></td><td><a class="btn sm ghost" href="<?= h(url('admin/officers.php')) ?>">All Officers</a></td></tr>
+        <tr class="total"><td><a href="<?= h(url('admin/pending.php')) ?>">Total Unique Students</a></td><td class="num"><?= $n ?></td><td class="num"><a href="<?= h(url('admin/pending.php?cat=docs')) ?>"><?= $pendingDocsCases ?></a></td><td class="num"><a href="<?= h(url('admin/pending.php?cat=all')) ?>"><?= $pendingTotalCases ?></a></td><td></td><td><a class="btn sm primary" href="<?= h(url('admin/pending.php')) ?>">Full Pending Report &rarr;</a></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -325,7 +440,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <div class="empty">No students assigned yet.</div>
   <?php else: ?>
   <div class="tbl"><table>
-    <thead><tr><th>SR#</th><th>Student</th><th>Counselor</th><?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?><th>Docs & Meeting</th><th>Refund</th><th>Progress</th><th>Next step</th><th>Actions</th></tr></thead>
+    <thead><tr><th>SR#</th><th>Student</th><th>Country &amp; Program</th><th>Counselor</th><?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?><th>Docs & Meeting</th><th>Refund</th><th>Progress</th><th>Next step</th><th>Actions</th></tr></thead>
     <tbody>
     <?php foreach (array_slice($rows, 0, 25) as $r):
         $ns = next_stage($r);
@@ -336,6 +451,10 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
       <tr>
         <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
         <td><a href="<?= h(url($base . '/student.php?id=' . $r['id'])) ?>"><b><?= h($r['name']) ?></b></a></td>
+        <td>
+          <span class="pill sm"><?= h($r['country'] ?: 'Italy') ?></span>
+          <?php if (!empty($r['program_level'])): ?><span class="pill sm acc"><?= h($r['program_level']) ?></span><?php endif; ?>
+        </td>
         <td><?= h($r['counselor'] ?: '-') ?></td>
         <?php if ($admin): ?>
           <td class="small">

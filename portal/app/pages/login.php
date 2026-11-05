@@ -25,19 +25,32 @@ if (is_post()) {
     }
 }
 
-page_start('Sign In · Unified Portal');
+page_start('Sign In · ScholarshipHive Edutancy');
 ?>
 <div class="login">
-  <div class="brand">
-    <div class="mark">P</div>
-    <div>
-      <div class="app"><?= h($CONFIG['app_name']) ?></div>
-      <small>Unified Sign-In Portal (Admin · PMS Leads · Counselors · Students)</small>
+  <div class="brand-hero" style="flex-direction:column; align-items:flex-start; gap:10px; padding:22px 24px;">
+    <div style="display:flex; gap:14px; align-items:center;">
+      <div class="brand-logo-wrap" style="width:52px; height:52px;"><?= brand_logo_svg(52) ?></div>
+      <div>
+        <div style="font-family:var(--f-serif); font-weight:700; font-size:21px; color:#FFFFFF; line-height:1.15;">
+          ScholarshipHive <span style="font-style:italic; font-weight:400; color:#74C3E4;">Edutancy</span>
+        </div>
+        <div style="font-size:12px; color:#E8EDF2; font-weight:600; margin-top:2px;">
+          Global Education, Scholarships &amp; Admissions Ecosystem
+        </div>
+      </div>
+    </div>
+    <div class="brand-promise">“Guiding every student's journey with clarity, honesty, and expertise.”</div>
+    <div class="values-strip">
+      <span class="value-chip">🎓 Student First</span>
+      <span class="value-chip">🛡 Integrity &amp; Trust</span>
+      <span class="value-chip">🌍 Global Opportunity</span>
+      <span class="value-chip">✨ Excellence</span>
     </div>
   </div>
-  <section class="panel">
-    <h1>Sign in to your account</h1>
-    <p class="muted">Enter your username and password. The portal will automatically open your <b>Super Admin / Admin</b>, <b>PMS Lead / Processing Staff</b>, <b>Counselor</b>, or <b>Student</b> workspace.</p>
+  <section class="panel" style="padding:22px 24px;">
+    <h1>Sign in to your portal</h1>
+    <p class="muted">Enter your username and password to open your <b>Super Admin / Admin</b>, <b>PMS Lead / Processing Officer</b>, <b>Counselor</b>, or <b>Student</b> workspace.</p>
     <?php if ($idleLogout): ?>
       <div class="flash warn" role="alert">Logged out due to inactivity</div>
     <?php endif; ?>
