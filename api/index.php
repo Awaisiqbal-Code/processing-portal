@@ -2,14 +2,13 @@
 declare(strict_types=1);
 
 /**
- * Production Condition 3: Vercel Ephemeral Storage Safeguard
+ * Production Condition 3: Optional Railway Redirect Safeguard
  *
- * Vercel serverless functions have an ephemeral `/tmp` filesystem where SQLite
- * writes and uploaded documents are lost on cold start. All live traffic on
- * Vercel is redirected (`302 Found`) to the primary persistent Railway deployment
- * unless `?vercel_readonly=1` is passed (which enforces strict read-only mode).
+ * If RAILWAY_PUBLIC_URL is explicitly configured in the environment, redirect
+ * Vercel traffic (`302 Found` / `307 Temporary Redirect`) to the Railway host.
+ * Otherwise, serve the application directly on Vercel using the writable SQLite instance.
  */
-$railwayBaseUrl = rtrim((string)(getenv('RAILWAY_PUBLIC_URL') ?: 'https://processing-portal-production.up.railway.app'), '/');
+$railwayBaseUrl = rtrim((string)(getenv('RAILWAY_PUBLIC_URL') ?: ''), '/');
 $isVercelRuntime = (bool)(getenv('VERCEL') || getenv('VERCEL_ENV') || str_contains($_SERVER['HTTP_HOST'] ?? '', '.vercel.app'));
 
 $uri = urldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
@@ -17,7 +16,7 @@ if ($uri === '' || $uri[0] !== '/') {
     $uri = '/' . $uri;
 }
 
-if ($isVercelRuntime && ($_GET['vercel_readonly'] ?? '') !== '1') {
+if ($railwayBaseUrl !== '' && $isVercelRuntime && ($_GET['vercel_readonly'] ?? '') !== '1') {
     $qs = $_SERVER['QUERY_STRING'] ?? '';
     $targetUrl = $railwayBaseUrl . $uri . ($qs !== '' ? '?' . $qs : '');
     // 307 Temporary Redirect preserves HTTP method (POST/PUT/DELETE) and request payload for API calls
@@ -26,7 +25,7 @@ if ($isVercelRuntime && ($_GET['vercel_readonly'] ?? '') !== '1') {
     exit;
 }
 
-if ($isVercelRuntime && strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+if ($railwayBaseUrl !== '' && $isVercelRuntime && strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');
     echo 'Write operations are disabled on the Vercel read-only mirror. Please use the primary Railway portal: ' . $railwayBaseUrl;
