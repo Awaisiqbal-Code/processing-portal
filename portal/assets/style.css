@@ -1419,3 +1419,7 @@ td.wrap, th.wrap { white-space: normal; }
 .stackbar i { display: block; background: var(--c); min-width: 4px; }
 .meter.blue i { background: linear-gradient(90deg, #0F5D9E, #74C3E4); }
 a.kpi { text-decoration: none; color: inherit; display: block; }
+/* University applications table: wrap long programme names and notes */
+#applications .tbl td { white-space: normal; vertical-align: top; }
+#applications .tbl td:nth-child(2) { min-width: 220px; }
+#applications .tbl td form input, #applications .tbl td form select { min-width: 0; }
