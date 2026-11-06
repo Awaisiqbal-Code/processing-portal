@@ -716,6 +716,12 @@ function ordinal_label(int $n): string {
  * Payment rows for a student. Saved rows win; for students never updated here the 1st/2nd/3rd rows
  * are read from the old sheet columns (consult1 = "1st / 2nd Installment Received", installment_N = amount).
  */
+/** "100000.0" (how the sheets stored amounts) -> "100000". */
+function clean_amount($v): string {
+    $v = trim((string)$v);
+    return preg_match('/^\d+\.0+$/', $v) ? preg_replace('/\.0+$/', '', $v) : $v;
+}
+
 function student_payments(array $r): array {
     $sid = (int)($r['id'] ?? 0);
     $saved = [];
@@ -729,12 +735,17 @@ function student_payments(array $r): array {
     if (($r['consult2'] ?? '') !== '' && $receivedUpTo < 2) $receivedUpTo = max($receivedUpTo, (int)preg_replace('/\D/', '', (string)$r['consult2']) ?: 2);
     if (($r['consult3'] ?? '') !== '' && $receivedUpTo < 3) $receivedUpTo = 3;
     $rows = [];
-    $max = max(3, $saved ? max(array_keys($saved)) : 0);
+    $sheetMax = 0;
+    for ($n = 1; $n <= 4; $n++) if (trim((string)($r['installment_' . $n] ?? '')) !== '') $sheetMax = $n;
+    $max = max(3, $saved ? max(array_keys($saved)) : 0, $sheetMax);
     for ($n = 1; $n <= $max; $n++) {
         if (isset($saved[$n])) { $rows[$n] = $saved[$n]; continue; }
-        $amt = trim((string)($r['installment_' . $n] ?? ''));
-        if (preg_match('/^\d+\.0$/', $amt)) $amt = substr($amt, 0, -2);
-        $rows[$n] = ['installment_no' => $n, 'status' => $n <= $receivedUpTo ? 'Received' : 'Pending', 'amount' => $amt !== '' ? $amt : null,
+        $amt = clean_amount($r['installment_' . $n] ?? '');
+        $word = $amt !== '' && !preg_match('/\d/', $amt);
+        $status = ($word && stripos($amt, 'waiv') !== false) ? 'Waived' : (($word && stripos($amt, 'partial') !== false) ? 'Partially received' : (($n <= $receivedUpTo || $amt !== '') ? 'Received' : 'Pending'));
+        if (stripos($amt, 'partial') !== false && !$word) { $status = 'Partially received'; $amt = trim(preg_replace('/\(?partial\)?/i', '', $amt)); }
+        if ($word) $amt = '';
+        $rows[$n] = ['installment_no' => $n, 'status' => $status, 'amount' => $amt !== '' ? $amt : null,
                      'received_date' => null, 'method' => null, 'note' => null, 'updated_by_name' => null, 'updated_at' => null, 'is_auto' => true];
     }
     return $rows;
@@ -765,17 +776,121 @@ function save_payment(array $actor, int $studentId, int $no, string $status, ?st
        ON CONFLICT(student_id, installment_no) DO UPDATE SET status = excluded.status, amount = excluded.amount, received_date = excluded.received_date,
        method = excluded.method, note = excluded.note, updated_by = excluded.updated_by, updated_at = excluded.updated_at',
       [$studentId, $no, $status, $amount ?: null, $date ?: null, $method, trim(mb_substr((string)$note, 0, 500)) ?: null, (int)$actor['id'], $now]);
-    // Keep the old sheet columns in step so exports and reports stay correct
-    $st = q('SELECT * FROM students WHERE id = ?', [$studentId])->fetch();
-    $highest = 0;
-    foreach (student_payments($st) as $p) if ($p['status'] === 'Received') $highest = max($highest, (int)$p['installment_no']);
-    $legacy = $highest ? ordinal_label($highest) . ' Installment Received' : null;
-    $set = ['consult1' => $legacy];
-    if ($no <= 4 && $amount !== '') $set['installment_' . $no] = $amount;
-    $sql = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
-    q("UPDATE students SET $sql, updated_at = ? WHERE id = ?", array_merge(array_values($set), [$now, $studentId]));
+    sync_payments_to_sheet($studentId);
     log_activity('student', $studentId, 'payment_updated', null, ['payment' => ordinal_label($no), 'status' => $status, 'amount' => $amount], (int)$actor['id']);
     return ['ok' => true];
+}
+
+/**
+ * Keeps the sheet columns (Consultancy received, 1st–4th Installment status, Last installment received)
+ * in step with the Payments panel, so nobody has to type the same thing twice.
+ */
+function sync_payments_to_sheet(int $studentId): void {
+    $st = q('SELECT * FROM students WHERE id = ?', [$studentId])->fetch();
+    if (!$st) return;
+    $rows = student_payments($st);
+    $highest = 0; $allDone = true;
+    foreach ($rows as $p) {
+        if ($p['status'] === 'Received') $highest = max($highest, (int)$p['installment_no']);
+        if (!in_array($p['status'], ['Received', 'Waived'], true)) $allDone = false;
+    }
+    $set = ['consult1' => $highest ? ordinal_label($highest) : null];
+    for ($n = 1; $n <= 4; $n++) {
+        $p = $rows[$n] ?? null;
+        $amt = $p ? clean_amount($p['amount'] ?? '') : '';
+        $set['installment_' . $n] = match ($p['status'] ?? 'Pending') {
+            'Received' => $amt !== '' ? $amt : 'Received',
+            'Partially received' => $amt !== '' ? $amt . ' (partial)' : 'Partially received',
+            'Waived' => 'Waived',
+            default => null,
+        };
+    }
+    if ($allDone && $rows) $set['last_installment'] = 'Yes';
+    elseif (($st['last_installment'] ?? '') === 'Yes') $set['last_installment'] = null;
+    $sql = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
+    q("UPDATE students SET $sql WHERE id = ?", array_merge(array_values($set), [$studentId]));
+}
+
+/** Saves every row as it is shown now, so later changes (remove / renumber) do not bring back sheet-derived rows. */
+function materialize_payments(array $actor, int $studentId): void {
+    $st = q('SELECT * FROM students WHERE id = ?', [$studentId])->fetch();
+    foreach (student_payments($st) as $p) {
+        if (!$p['is_auto']) continue;
+        q('INSERT OR IGNORE INTO student_payments (student_id, installment_no, status, amount, received_date, method, note, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+          [$studentId, (int)$p['installment_no'], $p['status'], $p['amount'], null, null, null, (int)$actor['id'], now()]);
+    }
+}
+
+/** Removes an extra payment (4th or later). The first three are always kept. Later payments move up one number. */
+function delete_payment(array $actor, int $studentId, int $no): array {
+    if (!can_update_journey($actor)) return ['ok' => false, 'error' => 'You have read-only access to payments.'];
+    if ($no <= 3) return ['ok' => false, 'error' => 'The 1st, 2nd and 3rd payments are always kept. Set the status instead.'];
+    materialize_payments($actor, $studentId);
+    q('DELETE FROM student_payments WHERE student_id = ? AND installment_no = ?', [$studentId, $no]);
+    foreach (q('SELECT id, installment_no FROM student_payments WHERE student_id = ? AND installment_no > ? ORDER BY installment_no', [$studentId, $no])->fetchAll() as $p) {
+        q('UPDATE student_payments SET installment_no = ? WHERE id = ?', [(int)$p['installment_no'] - 1, (int)$p['id']]);
+    }
+    // clear the sheet columns first so the removed row is not read back from the sheet
+    q('UPDATE students SET installment_4 = NULL WHERE id = ?', [$studentId]);
+    sync_payments_to_sheet($studentId);
+    log_activity('student', $studentId, 'payment_removed', null, ['payment' => ordinal_label($no)], (int)$actor['id']);
+    return ['ok' => true];
+}
+
+/**
+ * The other direction: when someone fills the sheet fields in the profile form
+ * (an amount in "Nth Installment status", or "Consultancy received"), the Payments panel updates itself.
+ * $extra = amounts typed for payments after the 4th (they have no sheet column).
+ */
+function sync_sheet_to_payments(array $actor, int $studentId, array $old, array $new, array $extra = []): void {
+    if (!can_update_journey($actor)) return;
+    $typed = [];
+    for ($n = 1; $n <= 4; $n++) {
+        $k = 'installment_' . $n;
+        if (!array_key_exists($k, $new)) continue;
+        if (clean_amount($new[$k] ?? '') !== clean_amount($old[$k] ?? '')) $typed[$n] = clean_amount($new[$k] ?? '');
+    }
+    foreach ($extra as $n => $v) {
+        $n = (int)$n; if ($n < 5 || $n > 12) continue;
+        $cur = q('SELECT amount FROM student_payments WHERE student_id = ? AND installment_no = ?', [$studentId, $n])->fetchColumn();
+        if (clean_amount($v) !== clean_amount($cur ?: '')) $typed[$n] = clean_amount($v);
+    }
+    $consultOld = (int)preg_replace('/\D/', '', (string)($old['consult1'] ?? ''));
+    $consultNew = array_key_exists('consult1', $new) ? (int)preg_replace('/\D/', '', (string)($new['consult1'] ?? '')) : $consultOld;
+    if (!$typed && $consultNew === $consultOld) return;
+
+    materialize_payments($actor, $studentId);
+    $saved = [];
+    foreach (q('SELECT * FROM student_payments WHERE student_id = ?', [$studentId]) as $p) $saved[(int)$p['installment_no']] = $p;
+    $now = now(); $today = date('Y-m-d');
+    $put = function (int $n, string $status, ?string $amount, ?string $date) use ($studentId, $actor, $now) {
+        q('INSERT INTO student_payments (student_id, installment_no, status, amount, received_date, updated_by, updated_at) VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(student_id, installment_no) DO UPDATE SET status = excluded.status, amount = excluded.amount, received_date = excluded.received_date, updated_by = excluded.updated_by, updated_at = excluded.updated_at',
+          [$studentId, $n, $status, $amount, $date, (int)$actor['id'], $now]);
+    };
+    foreach ($typed as $n => $v) {
+        $p = $saved[$n] ?? null;
+        $isWord = $v !== '' && !preg_match('/\d/', $v);
+        $partial = stripos($v, 'partial') !== false;
+        if ($partial && !$isWord) $v = trim(preg_replace('/\(?partial(ly received)?\)?/i', '', $v));
+        if ($v === '') {
+            $put($n, 'Pending', null, null);
+        } elseif ($isWord && stripos($v, 'waiv') !== false) {
+            $put($n, 'Waived', null, $p['received_date'] ?? null);
+        } else {
+            // an amount (or "Received") typed in the sheet means this payment came in
+            $put($n, $partial ? 'Partially received' : 'Received', $isWord ? ($p['amount'] ?? null) : $v, $p['received_date'] ?? $today);
+        }
+    }
+    if ($consultNew > $consultOld) {
+        for ($n = 1; $n <= min(12, $consultNew); $n++) {
+            if (isset($typed[$n])) continue;
+            $p = $saved[$n] ?? null;
+            if (!$p || $p['status'] === 'Pending') $put($n, 'Received', $p['amount'] ?? null, $p['received_date'] ?? $today);
+        }
+    }
+    sync_payments_to_sheet($studentId);
+    log_activity('student', $studentId, 'payments_synced_from_sheet', null, ['payments' => implode(', ', array_map('ordinal_label', array_keys($typed)))], (int)$actor['id']);
 }
 
 // =========================================================================

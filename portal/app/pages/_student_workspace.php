@@ -235,7 +235,10 @@ $wsPayTone = ['Received' => 'ok', 'Partially received' => 'warn', 'Waived' => 'a
               </div>
               <?php if (!empty($p['note'])): ?><div class="small"><?= h($p['note']) ?></div><?php endif; ?>
             </div>
-            <?php if ($wsCanStage): ?><button type="button" class="btn sm no-print" data-toggle-next>Update</button><?php endif; ?>
+            <?php if ($wsCanStage): ?><div class="pay-actions no-print">
+              <button type="button" class="btn sm" data-toggle-next>Update</button>
+              <?php if ($n > 3): ?><form method="post" onsubmit="return confirm('Remove the <?= ordinal_label($n) ?> payment?')"><?= csrf_field() ?><input type="hidden" name="action" value="delete_payment"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="installment_no" value="<?= $n ?>"><button class="btn sm danger-ghost" type="submit" title="Remove this payment (only 4th and later can be removed)">✕ Remove</button></form><?php endif; ?>
+            </div><?php endif; ?>
           </div>
           <?php if ($wsCanStage): ?>
           <form method="post" class="pay-form no-print" hidden>

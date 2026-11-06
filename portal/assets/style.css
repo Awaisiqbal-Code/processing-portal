@@ -1495,3 +1495,8 @@ tr.is-sel td { background: var(--accent-soft); }
 .meet-pane { display: grid; gap: 8px; margin-top: 10px; }
 @media (max-width: 560px) { .pay-top { flex-wrap: wrap; } }
 .doc-card.is-optional.ds-pending, .doc-card.is-optional.ds-none { border-left-color: var(--line-strong); }
+.pay-actions { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
+.pay-actions form { margin: 0; }
+.btn.danger-ghost { color: var(--bad); border-color: var(--bad-soft, rgba(220,38,38,.3)); }
+.btn.danger-ghost:hover { background: var(--bad-soft, rgba(220,38,38,.1)); }
+.sync-hint { display: block; margin-top: 2px; font-size: 11px; }

@@ -195,6 +195,14 @@ if (is_post() && post('action') === 'save_payment') {
     redirect($base . "/student.php?id={$id}#payments");
 }
 
+if (is_post() && post('action') === 'delete_payment') {
+    csrf_check();
+    $no = (int)post('installment_no');
+    $res = delete_payment($u, $id, $no);
+    flash($res['ok'] ? ordinal_label($no) . ' payment removed.' : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($base . "/student.php?id={$id}#payments");
+}
+
 // ---------- Meeting recording ----------
 if (is_post() && in_array(post('action'), ['meeting_save_link', 'meeting_upload_video', 'meeting_no_recording'], true)) {
     csrf_check();
@@ -447,6 +455,9 @@ if (is_post() && post('action') === 'save') {
             q("UPDATE students SET $set, pending_since = COALESCE(pending_since, ?) WHERE id = ? AND $w", array_merge(array_values($data), [$now, $id], $p));
             log_action('Updated student', $id);
             log_activity('student', $id, 'updated', null, ['name' => $data['name'] ?? ($r['name'] ?? '')], (int)$u['id']);
+            // Sheet payment fields -> Payments panel (amount typed = received)
+            $extraPays = is_array($_POST['inst_extra'] ?? null) ? array_map(fn($x) => trim(mb_substr((string)$x, 0, 40)), $_POST['inst_extra']) : [];
+            sync_sheet_to_payments($u, $id, $r, $data, $extraPays);
 
             if (!empty(post('new_remark_text'))) {
                 add_student_remark($u, $id, (string)post('new_remark_text'));
@@ -738,10 +749,12 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 
   <?php foreach ($activeFieldGroups as $group => $fields): ?>
   <fieldset><legend><?= country_flag($activeCountry) ?> <?= h($group) ?></legend><div class="fields">
-    <?php foreach ($fields as $k => $f):
+    <?php $sheetPays = $sheetPays ?? (!$isNew ? student_payments($r) : []);
+      foreach ($fields as $k => $f):
         if (!$isNew && in_array($k, ['drive_link', 'meeting_link', 'pending_docs_note', 'docs_checklist'], true)) continue;  // shown in Documents / Meeting sections
         if ($isNew && in_array($k, ['pending_docs_note', 'docs_checklist'], true)) continue;
         $v = (string)($r[$k] ?? '');
+        if (str_starts_with($k, 'installment_')) $v = clean_amount($v);
         $wide = in_array($f[1], ['textarea', 'readonly_textarea', 'url'], true) || in_array($k, ['disc2', 'disc3'], true) ? ' wide' : ''; ?>
       <label class="f<?= $wide ?>"><span><?= h($f[0]) ?><?= $k === 'name' ? ' *' : '' ?></span>
       <?php switch ($f[1]):
@@ -769,7 +782,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
               <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?>><?php foreach (['' => 'Not set', 'Yes' => 'Yes', 'No' => 'No'] as $ov => $ol): ?><option value="<?= $ov ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ol ?></option><?php endforeach; ?></select>
         <?php break;
         case 'select': ?>
-              <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?> <?= ($k === 'country' && $isNew) ? 'onchange="window.location.href=\'?new=1&country=\'+encodeURIComponent(this.value)"' : '' ?>><?php foreach ($f[2] as $ov): ?><option value="<?= h($ov) ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ov === '' ? 'Not set' : h($ov) ?></option><?php endforeach; ?></select>
+              <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?> <?= ($k === 'country' && $isNew) ? 'onchange="window.location.href=\'?new=1&country=\'+encodeURIComponent(this.value)"' : '' ?>><?php if ($v !== '' && !in_array($v, $f[2], true)): ?><option value="<?= h($v) ?>" selected><?= h($v) ?></option><?php endif; ?><?php foreach ($f[2] as $ov): ?><option value="<?= h($ov) ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ov === '' ? 'Not set' : h($ov) ?></option><?php endforeach; ?></select>
         <?php break;
         case 'readonly_textarea': ?>
               <textarea rows="2" readonly disabled style="background:var(--sunk); color:var(--muted);"><?= h($v) ?></textarea>
@@ -794,7 +807,14 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
               <input name="<?= $k ?>" value="<?= h($v) ?>" <?= $k === 'name' ? 'required' : '' ?> <?= $isCounselor ? 'readonly' : '' ?> <?= $sugg ? 'list="dl-' . h($k) . '" autocomplete="off"' : '' ?>>
               <?php if ($sugg): ?><datalist id="dl-<?= h($k) ?>"><?php foreach ($sugg as $sv): ?><option value="<?= h($sv) ?>"></option><?php endforeach; ?></datalist><?php endif; ?>
       <?php endswitch; ?>
+      <?php if (!$isNew && (str_starts_with($k, 'installment_') || $k === 'consult1')): ?><span class="small muted sync-hint">↔ synced with Payments</span><?php endif; ?>
       </label>
+      <?php if (!$isNew && $k === 'installment_4'): foreach ($sheetPays as $xp): $xn = (int)$xp['installment_no']; if ($xn <= 4) continue; ?>
+        <label class="f"><span><?= ordinal_label($xn) ?> Installment status</span>
+          <input name="inst_extra[<?= $xn ?>]" value="<?= h($xp['status'] === 'Waived' ? 'Waived' : ($xp['status'] === 'Pending' ? '' : (($xp['amount'] ? clean_amount($xp['amount']) : 'Received') . ($xp['status'] === 'Partially received' ? ' (partial)' : '')))) ?>" <?= $isCounselor ? 'readonly' : '' ?>>
+          <span class="small muted sync-hint">↔ synced with Payments</span>
+        </label>
+      <?php endforeach; endif; ?>
     <?php endforeach; ?>
   </div></fieldset>
   <?php endforeach; ?>
