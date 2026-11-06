@@ -161,12 +161,13 @@ require APP . '/stages.php';
 require APP . '/auth.php';
 require APP . '/services.php';
 require APP . '/workflow.php';
+require APP . '/staff.php';
 
 // Apply pending additive schema migrations automatically (once) so a plain `php -S` run works too.
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
         $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '008_payments_meetings_docs'")->fetchColumn();
+            && q("SELECT 1 FROM schema_migrations WHERE version = '009_staff_profiles_permissions'")->fetchColumn();
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();

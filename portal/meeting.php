@@ -39,9 +39,9 @@ if (!$s) {
 // Handle staff updating meeting link directly
 if (is_post() && post('action') === 'save_meeting') {
     csrf_check();
-    if (!is_staff_role($u['role'])) {
+    if (!is_staff_role($u['role']) || staff_edit_blocked($u, $s)) {
         http_response_code(403);
-        exit('Access denied.');
+        exit(view_only_message('students.edit_all'));
     }
     $newMeeting = post('meeting_link');
     if (safe_link($newMeeting)) {

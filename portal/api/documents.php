@@ -38,6 +38,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (staff_edit_blocked($user, $st)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => view_only_message('students.edit_all')]);
+        exit;
+    }
     // Check if this is a consent upload
     if (!empty($_FILES['consent_file'])) {
         $tplId = !empty($input['template_id']) ? (int)$input['template_id'] : null;

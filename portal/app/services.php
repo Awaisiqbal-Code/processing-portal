@@ -207,8 +207,8 @@ function get_student_remarks(int $studentId): array {
  * Processing_staff and counselors cannot disable, refund, or verify.
  */
 function can_manage_student_lifecycle(array $actor): bool {
-    $role = $actor['role'] ?? '';
-    return in_array($role, ['super_admin', 'admin', 'pms_lead'], true);
+    // Super Admin always; Admin / PMS Lead when the Super Admin has given them "Disable / refund students".
+    return ($actor['role'] ?? '') === 'super_admin' || (in_array($actor['role'] ?? '', ['admin', 'pms_lead'], true) && user_can($actor, 'students.status'));
 }
 
 /**
@@ -733,7 +733,7 @@ function get_applicable_consent_template(?string $country): ?array {
  * Creates a student record with validation and PMS Lead notification.
  */
 function create_student(array $actor, array $data, bool $suppressNotification = false): array {
-    if (!can_manage_student_lifecycle($actor) && !in_array($actor['role'] ?? '', ['processing_staff', 'officer'], true)) {
+    if (!can_quick_add_student($actor)) {
         return ['ok' => false, 'code' => 403, 'error' => 'Permission denied to create student records.'];
     }
 

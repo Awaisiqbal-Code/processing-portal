@@ -323,6 +323,10 @@ function require_role(string $role, bool $allowPasswordChange = false): array {
                 if ((int)$u['must_change_password'] && !$allowPasswordChange && !is_json_request()) {
                     redirect('account/password.php?portal=' . $u['role']);
                 }
+                if (function_exists('enforce_page_permission')) {
+                    $bt = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1);
+                    enforce_page_permission($u, (string)($bt[0]['file'] ?? ''));
+                }
                 return $u;
             }
         }

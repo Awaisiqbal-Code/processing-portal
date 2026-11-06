@@ -330,7 +330,7 @@ function staff_options(): array {
 }
 
 function can_change_assignments(array $u): bool {
-    return in_array($u['role'] ?? '', ['super_admin', 'admin', 'pms_lead'], true);
+    return ($u['role'] ?? '') === 'super_admin' || (in_array($u['role'] ?? '', ['admin', 'pms_lead'], true) && user_can($u, 'students.assign'));
 }
 
 /** Record one assignment change in assignment_history. */
@@ -407,7 +407,7 @@ function counselor_id_by_name(?string $name): ?int {
 // =========================================================================
 
 function can_quick_add_student(array $u): bool {
-    return in_array($u['role'] ?? '', ['super_admin', 'admin', 'pms_lead', 'processing_staff', 'officer'], true);
+    return ($u['role'] ?? '') === 'super_admin' || (in_array($u['role'] ?? '', ['admin', 'pms_lead', 'processing_staff', 'officer'], true) && user_can($u, 'students.add'));
 }
 
 /**
@@ -445,7 +445,7 @@ function quick_register_student(array $actor, array $in): array {
     if (!$counselorId) $errors[] = 'Choose the counselor.';
 
     $myDept = (string)($actor['department'] ?? 'backend');
-    $isLead = can_manage_student_lifecycle($actor);
+    $isLead = in_array($actor['role'] ?? '', ['super_admin', 'admin', 'pms_lead'], true);
     $fe = (int)($in['frontend_officer_id'] ?? 0) ?: null;
     $be = (int)($in['officer_id'] ?? 0) ?: null;
     if (!$isLead) {

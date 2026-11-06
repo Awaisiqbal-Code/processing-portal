@@ -8,7 +8,7 @@ $wsJourney = student_journey($r, $studentApps);
 $wsStatus = processing_status($r, $wsJourney);
 $wsDone = journey_done_count($wsJourney);
 $wsCurrent = journey_current($wsJourney);
-$wsCanStage = can_update_journey($u);
+$wsCanStage = can_update_journey($u) && empty($viewOnly) && ($u['role'] ?? '') !== 'counselor';
 $wsCanAssign = can_change_assignments($u);
 $wsOpts = staff_options();
 $wsHistory = assignment_history($id);

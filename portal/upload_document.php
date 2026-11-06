@@ -48,6 +48,12 @@ if ($u['role'] === 'student') {
     http_response_code(403);
     exit('Access denied.');
 }
+// Admin / PMS Lead without edit access on this student: view only
+$editRow = q('SELECT id, officer_id, frontend_officer_id FROM students WHERE id = ?', [$studentId])->fetch();
+if ($editRow && staff_edit_blocked($u, $editRow)) {
+    flash(view_only_message('students.edit_all'), 'bad');
+    redirect_back();
+}
 
 // 1. Delete Custom Document
 if ($action === 'delete_custom') {

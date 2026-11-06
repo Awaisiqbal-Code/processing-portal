@@ -3,7 +3,7 @@ declare(strict_types=1);
 // Shared University Programs Directory & Applications Tracker for admin, pms_lead, processing_staff, and counselor. Expects $u.
 
 $admin = is_admin_role($u['role']);
-$canManage = can_manage_student_lifecycle($u);
+$canManage = ($u['role'] ?? '') === 'super_admin' || (in_array($u['role'] ?? '', ['admin', 'pms_lead'], true) && user_can($u, 'programs.manage'));
 $base = $admin ? 'admin' : 'officer';
 
 // Handle adding a new program to the directory

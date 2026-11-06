@@ -5,6 +5,7 @@ declare(strict_types=1);
 $admin = is_admin_role($u['role']);
 $canManage = can_manage_student_lifecycle($u);
 $isCounselor = ($u['role'] === 'counselor');
+$isRealCounselor = $isCounselor;
 $base = $admin ? 'admin' : 'officer';
 $id = (int)(get('id') ?: post('id'));
 $isNew = get('new') === '1' || post('mode') === 'new' || ($id === 0 && get('country') !== '');
@@ -18,8 +19,23 @@ foreach ($officers as $o) {
 }
 $errors = [];
 
+// ---------- View-only for Admin / PMS Lead on students that are not theirs ----------
+$viewOnly = !$isNew && !empty($r) && staff_edit_blocked($u, $r);
+if ($isNew && !can_quick_add_student($u)) {
+    flash(view_only_message('students.add'), 'bad');
+    redirect($base . '/students.php');
+}
+$viewOnlyAllowed = ['add_remark', 'add_comm'];
+if (can_change_assignments($u)) $viewOnlyAllowed[] = 'change_assignment';
+if ($viewOnly && is_post() && !in_array(post('action'), $viewOnlyAllowed, true)) {
+    http_response_code(403);
+    flash(view_only_message('students.edit_all'), 'bad');
+    redirect($base . "/student.php?id=$id");
+}
+if ($viewOnly) { $isCounselor = true; $canManage = false; }   // same read-only screen as counselors (remarks and communication stay open)
+
 // ---------- Counselor Read-Only Security Guard ----------
-if ($isCounselor && is_post()) {
+if ($isRealCounselor && is_post()) {
     $allowedCounselorActions = ['add_remark', 'upload_consent_doc', 'add_comm'];
     if (!in_array(post('action'), $allowedCounselorActions, true)) {
         http_response_code(403);
@@ -606,7 +622,11 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 <?php endif; ?>
 
 <!-- Counselor Read-Only Informational Notice -->
-<?php if ($isCounselor): ?>
+<?php if ($viewOnly): ?>
+<div class="flash" style="margin-bottom:1rem; border-left:5px solid var(--accent); background:var(--surface);">
+  <b>View only:</b> this student is not assigned to you, so you can see everything and add remarks or log communication, but not change the record. <?= user_can($u, 'students.edit_all') ? '' : 'The Super Admin can give you “Edit any student” access.' ?>
+</div>
+<?php elseif ($isCounselor): ?>
 <div class="flash" style="margin-bottom:1rem; border-left:5px solid var(--accent); background:var(--surface);">
   <b>Counselor Workspace:</b> You are viewing your assigned student in read-only mode. You can add internal remarks below and upload signed consent forms.
 </div>
@@ -931,7 +951,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <?php if (!$isCounselor): ?>
       <button class="btn primary" type="submit"><?= $isNew ? 'Create student' : 'Save profile changes' ?></button>
     <?php else: ?>
-      <span class="pill muted" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Counselor Read-Only Access</span>
+      <span class="pill muted" style="font-size:0.85rem; padding:0.4rem 0.8rem;"><?= $viewOnly ? 'View only' : 'Counselor Read-Only Access' ?></span>
     <?php endif; ?>
     <a class="btn" href="<?= h(url($base . '/students.php')) ?>">Back to list</a>
   </div>

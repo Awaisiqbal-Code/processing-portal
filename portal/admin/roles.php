@@ -47,7 +47,7 @@ if (is_post()) {
         $department = post('department', 'backend');
         $result = create_staff_user($u, $name, $username, $role, $department);
         if ($result['ok']) {
-            $_SESSION['new_cred'] = [$name, $username, $result['password'], $role];
+            $_SESSION['new_cred'] = [$name, $username, $result['credentials'][2] ?? '', $role];
             flash('Created ' . role_label($role) . ' account for ' . $name . '.');
         } else {
             flash($result['error'], 'bad');
@@ -128,6 +128,7 @@ $assignableRoles = [
 page_start('User & Role Management', $u, PORTALS[$u['role']]['label']);
 ?>
 <h1>User &amp; Role Management <span class="pill ok" style="font-size:0.8rem; vertical-align:middle;">Super Admin Only</span></h1>
+<div class="flash" style="margin-bottom:1rem">Tip: to add a person with email and WhatsApp, move someone between Front End and Back End with their students, or promote someone to Lead / Admin with chosen access, use <a href="<?= h(url('admin/staff.php')) ?>"><b>Team → Manage</b></a>. Every move is recorded in the student’s assignment history.</div>
 
 <?php if ($cred): ?>
 <div class="cred" role="status">

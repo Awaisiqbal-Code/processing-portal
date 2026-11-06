@@ -909,3 +909,129 @@
     b.textContent = '✓ Marked — press Save to keep';
   });
 })();
+
+/* ---- Team: filters, add-person form, role / team change wizard ---- */
+(function () {
+  function onReady(fn) { if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+  var OFFICER = ['processing_staff', 'pms_lead'];
+  function val(form, name) { var c = form.querySelector('input[name="' + name + '"]:checked'); return c ? c.value : ''; }
+  function setPermDefaults(form, role) {
+    form.querySelectorAll('input[name="perms[]"]').forEach(function (cb) {
+      var d = cb.getAttribute('data-def-' + role);
+      if (d !== null) cb.checked = d === '1';
+    });
+  }
+  onReady(function () {
+    // Filters on the team table
+    var tf = document.querySelector('[data-team-filter]');
+    if (tf) {
+      var rows = document.querySelectorAll('.team-tbl tbody tr'), empty = document.querySelector('[data-tf-empty]');
+      var apply = function () {
+        var q = (tf.querySelector('[data-tf-q]').value || '').toLowerCase().trim(), r = tf.querySelector('[data-tf-role]').value,
+            t = tf.querySelector('[data-tf-team]').value, s = tf.querySelector('[data-tf-status]').value, shown = 0;
+        rows.forEach(function (tr) {
+          var ok = (!q || tr.getAttribute('data-q').indexOf(q.replace(/\s+/g, ' ')) !== -1 || tr.getAttribute('data-q').indexOf(q.replace(/\D/g, '') || '\u0000') !== -1)
+            && (!r || tr.getAttribute('data-role') === r) && (!t || tr.getAttribute('data-team') === t) && (!s || tr.getAttribute('data-active') === s);
+          tr.hidden = !ok; if (ok) shown++;
+        });
+        if (empty) empty.hidden = shown > 0;
+      };
+      tf.addEventListener('input', apply); tf.addEventListener('change', apply);
+    }
+
+    // Add a person
+    var af = document.querySelector('[data-add-person]');
+    if (af) {
+      var show = function () {
+        var role = val(af, 'role');
+        af.querySelectorAll('[data-show-for]').forEach(function (el) { el.hidden = el.getAttribute('data-show-for').split(' ').indexOf(role) === -1; });
+      };
+      af.querySelectorAll('input[name="role"]').forEach(function (r) {
+        r.addEventListener('change', function () { show(); if (r.value === 'admin' || r.value === 'pms_lead') setPermDefaults(af, r.value); });
+      });
+      show();
+      var nm = af.querySelector('[data-name-src]'), un = af.querySelector('[data-username]');
+      if (nm && un) {
+        var touched = un.value !== '';
+        un.addEventListener('input', function () { touched = un.value !== ''; });
+        nm.addEventListener('input', function () {
+          if (touched) return;
+          un.value = nm.value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 34);
+        });
+      }
+      if (location.hash === '#add-person') af.querySelector('input[name="name"]').focus();
+    }
+
+    // Role / team change wizard
+    var w = document.querySelector('[data-role-wizard]');
+    if (w) {
+      var d = function (k) { return w.getAttribute('data-' + k); }, n = function (k) { return parseInt(d(k) || '0', 10); };
+      var oldRole = d('old-role'), oldDept = d('old-dept'), who = d('name');
+      var lastRole = oldRole;
+      var update = function () {
+        var role = val(w, 'role'), dept = val(w, 'department'), off = OFFICER.indexOf(role) !== -1, oldOff = OFFICER.indexOf(oldRole) !== -1;
+        w.querySelector('[data-rw-team]').hidden = !off;
+        if (!off) dept = oldDept;
+        var roleCh = role !== oldRole, teamCh = off && oldOff && dept !== oldDept;
+        var fe = n('fe'), be = n('be'), cn = n('cn'), ld = n('ld');
+        var box = w.querySelector('[data-rw-students]');
+        var opt = function (k, on) { w.querySelector('[data-opt="' + k + '"]').hidden = !on; };
+        var to = function (k, on, label) { var el = w.querySelector('[data-to="' + k + '"]'); el.hidden = !on; if (label) { var l = el.querySelector('[data-to-label]'); if (l) l.textContent = label; } };
+        ['frontend', 'backend', 'counselor', 'lead'].forEach(function (k) { to(k, false); });
+        var officerMoves = oldOff && (fe + be) > 0 && (roleCh || teamCh);
+        var needCn = oldRole === 'counselor' && role !== 'counselor' && cn > 0, needLd = oldRole === 'pms_lead' && role !== 'pms_lead' && ld > 0;
+        box.hidden = !(officerMoves || needCn || needLd);
+        w.querySelector('.rw-opts').hidden = !officerMoves;
+        var summary = [];
+        if (officerMoves) {
+          var mode = val(w, 'students');
+          if (teamCh) {
+            opt('carry', true); opt('keep', false); opt('handover', true);
+            var cnt = oldDept === 'frontend' ? fe : be, other = oldDept === 'frontend' ? 'back-end' : 'front-end', taken = oldDept === 'frontend' ? n('be-taken') : n('fe-taken');
+            w.querySelector('[data-carry-text]').textContent = 'Take their ' + cnt + ' student' + (cnt === 1 ? '' : 's') + ' along — they become the ' + other + ' officer for them' + (taken ? ' (replaces the current ' + other + ' officer on ' + taken + ')' : '');
+            if (mode !== 'carry' && mode !== 'handover') { w.querySelector('input[name="students"][value="carry"]').checked = true; mode = 'carry'; }
+            if (mode === 'carry') {
+              if (oldDept === 'frontend') to('frontend', true, 'Who takes over the front-end side?'); else to('backend', true, 'Who takes over the back-end side?');
+              summary.push(who + ' moves to ' + (dept === 'frontend' ? 'Front End' : 'Back End') + ' and takes ' + cnt + ' student' + (cnt === 1 ? '' : 's') + ' along.');
+            } else {
+              if (fe) to('frontend', true, 'Front-end students (' + fe + ') go to'); if (be) to('backend', true, 'Back-end students (' + be + ') go to');
+              summary.push(who + ' starts fresh on ' + (dept === 'frontend' ? 'Front End' : 'Back End') + '; their students go to the colleague you choose.');
+            }
+          } else if (off) {
+            opt('carry', false); opt('keep', true); opt('handover', true);
+            if (mode !== 'keep' && mode !== 'handover') { w.querySelector('input[name="students"][value="keep"]').checked = true; mode = 'keep'; }
+            if (mode === 'handover') { if (fe) to('frontend', true, 'Front-end students (' + fe + ') go to'); if (be) to('backend', true, 'Back-end students (' + be + ') go to'); summary.push('Their ' + (fe + be) + ' students go to the colleague you choose.'); }
+            else summary.push(who + ' keeps their ' + (fe + be) + ' students.');
+          } else {
+            opt('carry', false); opt('keep', false); opt('handover', true);
+            w.querySelector('input[name="students"][value="handover"]').checked = true;
+            if (fe) to('frontend', true, 'Front-end students (' + fe + ') go to'); if (be) to('backend', true, 'Back-end students (' + be + ') go to');
+            summary.push('As ' + (role === 'admin' ? 'Admin' : 'Counselor') + ' they cannot keep an officer caseload — their ' + (fe + be) + ' students go to the colleague you choose (or stay unassigned).');
+          }
+        }
+        if (needCn) { to('counselor', true); summary.push('Their ' + cn + ' counselled students go to the counselor you choose.'); }
+        if (needLd) { to('lead', true); summary.push('Students they lead (' + ld + ') go to the lead you choose.'); }
+        var pb = w.querySelector('[data-rw-perms]');
+        pb.hidden = !(role === 'admin' || role === 'pms_lead');
+        if (role !== lastRole) {
+          if (role === oldRole) w.querySelectorAll('input[name="perms[]"]').forEach(function (cb) { cb.checked = cb.getAttribute('data-cur') === '1'; });
+          else if (role === 'admin' || role === 'pms_lead') setPermDefaults(w, role);
+          lastRole = role;
+        }
+        if (roleCh) summary.unshift('Role: ' + oldRole.replace('_', ' ') + ' → ' + role.replace('_', ' ') + '.');
+        else if (teamCh) summary.unshift('Team: ' + (oldDept === 'frontend' ? 'Front End' : 'Back End') + ' → ' + (dept === 'frontend' ? 'Front End' : 'Back End') + '.');
+        var sumEl = w.querySelector('[data-rw-summary]');
+        sumEl.textContent = summary.join(' ');
+        var changed = roleCh || teamCh;
+        w.querySelector('[data-rw-submit]').textContent = changed ? 'Apply change' : 'Save';
+        w.querySelector('[data-rw-submit]').disabled = !changed && pb.hidden;
+      };
+      w.addEventListener('change', update);
+      w.addEventListener('submit', function (e) {
+        var s = w.querySelector('[data-rw-summary]').textContent;
+        if (s && !confirm(s + '\n\nApply this change?')) e.preventDefault();
+      });
+      update();
+    }
+  });
+})();

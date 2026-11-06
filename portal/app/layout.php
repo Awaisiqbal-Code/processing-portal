@@ -233,7 +233,7 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 </header>
 <nav class="dock" id="app-dock" aria-label="Main navigation">
   <div class="dock-inner">
-    <?php foreach (nav_items($u['role']) as $href => $label): ?>
+    <?php foreach (nav_items($u['role']) as $href => $label): if (!nav_allowed($u, $href)) continue; ?>
       <a class="dock-item" href="<?= h(url($href)) ?>" <?= $self === $href ? 'aria-current="page"' : '' ?> aria-label="<?= h($label) ?>">
         <span class="dock-icon"><?= nav_icon($href) ?></span>
         <span class="dock-label"><?= h($label) ?></span>
