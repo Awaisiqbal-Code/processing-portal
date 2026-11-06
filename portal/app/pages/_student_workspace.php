@@ -17,7 +17,7 @@ $wsFe = (int)($r['frontend_officer_id'] ?? 0);
 $wsBe = (int)($r['officer_id'] ?? 0);
 $wsPms = (int)($r['assigned_pms_lead_id'] ?? 0);
 $wsCn = (int)($r['assigned_counselor_id'] ?? 0) ?: (counselor_id_by_name($r['counselor'] ?? '') ?? 0);
-$wsFlags = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+$wsFlags = country_flags_map();
 $wsStaffForStage = array_merge($wsOpts['frontend'], $wsOpts['backend']);
 usort($wsStaffForStage, fn($a, $b) => strcasecmp($a['name'], $b['name']));
 $wsStaffForStage = array_values(array_column($wsStaffForStage, null, 'id'));
@@ -28,6 +28,8 @@ $wsPendingHours = !empty($r['pending_since']) ? (int)floor((time() - (strtotime(
 <nav class="section-nav no-print" aria-label="Profile sections">
   <a href="#overview">Overview</a>
   <a href="#journey">Processing Journey</a>
+  <a href="#payments">Payments</a>
+  <a href="#meeting">Meeting</a>
   <a href="#assignments">Assignments</a>
   <a href="#sheet-details">Sheet Details</a>
   <a href="#documents">Documents</a>
@@ -152,6 +154,7 @@ $wsPendingHours = !empty($r['pending_since']) ? (int)floor((time() - (strtotime(
               <span>👤 <?= h($st['assigned_name'] ?: 'Unassigned') ?></span>
               <?php if (!$st['is_auto'] && $st['updated_at']): ?><span class="muted">Updated <?= h(time_ago((string)$st['updated_at'])) ?><?= $st['updated_by_name'] ? ' by ' . h($st['updated_by_name']) : '' ?></span><?php endif; ?>
             </div>
+            <?php if ($st['key'] === 'payment'): ?><div class="chip-row"><?php foreach (student_payments($r) as $pp): ?><a class="doc-chip <?= $pp['status'] === 'Received' ? 'is-ok' : '' ?>" href="#payments"><?= ordinal_label((int)$pp['installment_no']) ?> · <?= $pp['status'] === 'Received' ? '✓ received' : h(strtolower($pp['status'])) ?></a><?php endforeach; ?></div><?php endif; ?>
             <?php if (!empty($st['notes'])): ?><div class="stage-notes"><?= nl2br(h($st['notes'])) ?></div><?php endif; ?>
           </div>
         </div>
@@ -197,4 +200,121 @@ $wsPendingHours = !empty($r['pending_since']) ? (int)floor((time() - (strtotime(
       </ul>
     </details>
   <?php endif; ?>
+</section>
+
+<?php
+// ---------- Payments (1st / 2nd / 3rd …) ----------
+$wsPays = student_payments($r);
+$wsPaySum = payment_summary($wsPays);
+$wsNextPay = count($wsPays) + 1;
+// ---------- Meeting recording ----------
+$wsRec = meeting_recording_state($r);
+$wsVideo = trim((string)($r['meeting_video_path'] ?? ''));
+$wsRecLink = trim((string)($r['meeting_link'] ?? ''));
+$wsRecLink = safe_link($wsRecLink) && $wsRecLink !== trim((string)($r['drive_link'] ?? '')) ? $wsRecLink : '';
+$wsRecMode = $wsVideo !== '' ? 'video' : ($wsRec['state'] === 'not_recorded' ? 'none' : 'link');
+$wsPayTone = ['Received' => 'ok', 'Partially received' => 'warn', 'Waived' => 'acc', 'Pending' => 'bad'];
+?>
+<section class="ws-grid ws-grid-2" id="payments-meeting">
+  <div class="ws-card" id="payments">
+    <div class="ws-card-h"><span class="eyebrow">Payments</span>
+      <span class="small"><b><?= $wsPaySum['received'] ?></b> of <?= $wsPaySum['total'] ?> received<?= $wsPaySum['amount_received'] > 0 ? ' · ' . h(number_format($wsPaySum['amount_received'])) : '' ?></span></div>
+    <div class="pay-steps">
+      <?php foreach ($wsPays as $p): $n = (int)$p['installment_no']; $tone = $wsPayTone[$p['status']] ?? 'bad'; ?>
+        <div class="pay-row tone-<?= $tone ?>">
+          <div class="pay-top">
+            <span class="pay-no"><?= ordinal_label($n) ?></span>
+            <div class="pay-text">
+              <b><?= ordinal_label($n) ?> payment</b>
+              <span class="pill sm <?= $tone ?>"><?= $p['status'] === 'Received' ? '✓ Received' : h($p['status']) ?></span>
+              <div class="small muted">
+                <?= $p['amount'] ? 'Amount ' . h(is_numeric(str_replace(',', '', (string)$p['amount'])) ? number_format((float)str_replace(',', '', (string)$p['amount'])) : $p['amount']) : 'No amount' ?>
+                <?= $p['received_date'] ? ' · ' . h(fmt_date($p['received_date'])) : '' ?>
+                <?= $p['method'] ? ' · ' . h($p['method']) : '' ?>
+                <?= $p['is_auto'] ? ' · <span title="Read from the sheet columns">from sheet</span>' : ($p['updated_by_name'] ? ' · by ' . h($p['updated_by_name']) : '') ?>
+              </div>
+              <?php if (!empty($p['note'])): ?><div class="small"><?= h($p['note']) ?></div><?php endif; ?>
+            </div>
+            <?php if ($wsCanStage): ?><button type="button" class="btn sm no-print" data-toggle-next>Update</button><?php endif; ?>
+          </div>
+          <?php if ($wsCanStage): ?>
+          <form method="post" class="pay-form no-print" hidden>
+            <?= csrf_field() ?><input type="hidden" name="action" value="save_payment"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="installment_no" value="<?= $n ?>">
+            <div class="seg seg-sm" role="radiogroup" aria-label="Status">
+              <?php foreach (['Pending', 'Received', 'Partially received', 'Waived'] as $ps): ?>
+                <label><input type="radio" name="pay_status" value="<?= h($ps) ?>" <?= $p['status'] === $ps ? 'checked' : '' ?>><span><?= h($ps === 'Partially received' ? 'Partial' : $ps) ?></span></label>
+              <?php endforeach; ?>
+            </div>
+            <div class="pay-fields">
+              <label class="f"><span>Amount</span><input name="pay_amount" inputmode="decimal" value="<?= h($p['amount'] ?? '') ?>" placeholder="e.g. 100000"></label>
+              <label class="f"><span>Date received</span><input type="date" name="pay_date" value="<?= h($p['received_date'] ?? '') ?>"></label>
+              <label class="f"><span>Method</span><select name="pay_method"><option value="">—</option><?php foreach (PAYMENT_METHODS as $pm): ?><option <?= ($p['method'] ?? '') === $pm ? 'selected' : '' ?>><?= h($pm) ?></option><?php endforeach; ?></select></label>
+              <label class="f wide"><span>Note</span><input name="pay_note" maxlength="500" value="<?= h($p['note'] ?? '') ?>" placeholder="Receipt no., who paid, anything to remember"></label>
+            </div>
+            <div><button class="btn primary sm" type="submit">Save <?= ordinal_label($n) ?> payment</button></div>
+          </form>
+          <?php endif; ?>
+        </div>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($wsCanStage && $wsNextPay <= 12): ?>
+      <form method="post" class="no-print" style="margin-top:8px">
+        <?= csrf_field() ?><input type="hidden" name="action" value="save_payment"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="installment_no" value="<?= $wsNextPay ?>"><input type="hidden" name="pay_status" value="Pending">
+        <button class="btn sm" type="submit">+ Add <?= ordinal_label($wsNextPay) ?> payment</button>
+      </form>
+    <?php endif; ?>
+  </div>
+
+  <div class="ws-card" id="meeting">
+    <div class="ws-card-h"><span class="eyebrow">Meeting recording</span>
+      <?php if ($wsRec['state'] === 'recorded'): ?><span class="pill sm ok">✓ Recorded</span>
+      <?php elseif ($wsRec['state'] === 'not_recorded'): ?><span class="pill sm warn">Not recorded</span>
+      <?php else: ?><span class="pill sm bad">Pending</span><?php endif; ?>
+    </div>
+    <div class="small muted" style="margin-bottom:8px">1st meeting held: <b><?= ($r['initial_meeting'] ?? '') === 'Yes' ? 'Yes' : 'Not yet' ?></b><?= !empty($r['follow_up_1']) ? ' · ' . h(fmt_date((string)$r['follow_up_1'])) : '' ?></div>
+
+    <?php if ($wsVideo !== ''): ?>
+      <video class="meet-video" controls preload="metadata" src="<?= h(url('meeting_video.php?id=' . (int)$id)) ?>"></video>
+      <div class="small muted">🎬 <?= h($r['meeting_video_name'] ?: 'Recording') ?> · <a href="<?= h(url('meeting_video.php?id=' . (int)$id . '&download=1')) ?>">Download</a></div>
+    <?php elseif ($wsRec['state'] === 'recorded' && $wsRec['url']): ?>
+      <a class="btn primary" href="<?= h($wsRec['url']) ?>" target="_blank" rel="noopener noreferrer">▶ Play recording</a>
+      <div class="small muted" style="margin-top:4px;word-break:break-all"><?= h($wsRec['url']) ?></div>
+    <?php elseif ($wsRec['state'] === 'not_recorded'): ?>
+      <div class="meet-reason"><b>Why not recorded:</b> <?= h($wsRec['reason']) ?></div>
+    <?php elseif ($wsRec['state'] === 'recorded'): ?>
+      <div class="small">Marked as recorded on the sheet, but no link or video is saved yet.</div>
+    <?php else: ?>
+      <div class="small muted">No recording yet. Add a link, upload the video, or note why it was not recorded.</div>
+    <?php endif; ?>
+
+    <?php if ($wsCanStage): ?>
+    <div class="meet-edit no-print" data-meet>
+      <div class="seg seg-sm" role="radiogroup" aria-label="Recording option" style="margin-top:12px">
+        <label><input type="radio" name="meet_mode" value="link" <?= $wsRecMode === 'link' ? 'checked' : '' ?>><span>🔗 Link</span></label>
+        <label><input type="radio" name="meet_mode" value="video" <?= $wsRecMode === 'video' ? 'checked' : '' ?>><span>🎬 Upload video</span></label>
+        <label><input type="radio" name="meet_mode" value="none" <?= $wsRecMode === 'none' ? 'checked' : '' ?>><span>✖ Not recorded</span></label>
+      </div>
+      <form method="post" class="meet-pane" data-pane="link">
+        <?= csrf_field() ?><input type="hidden" name="action" value="meeting_save_link"><input type="hidden" name="id" value="<?= (int)$id ?>">
+        <label class="f"><span>Recording link (Zoom, Google Drive file, YouTube…)</span><input type="url" name="meeting_link" value="<?= h($wsRecLink) ?>" placeholder="https://…" required></label>
+        <label class="check small"><input type="checkbox" name="meeting_held" value="1" <?= ($r['initial_meeting'] ?? '') === 'Yes' ? 'checked' : '' ?>> 1st meeting was held</label>
+        <button class="btn primary sm" type="submit">Save link</button>
+      </form>
+      <form method="post" class="meet-pane" data-pane="video" enctype="multipart/form-data">
+        <?= csrf_field() ?><input type="hidden" name="action" value="meeting_upload_video"><input type="hidden" name="id" value="<?= (int)$id ?>">
+        <label class="dropzone"><input type="file" name="meeting_video" accept="video/*,.mp4,.mov,.webm,.mkv,.m4a,.mp3" required><span data-dz-label>⬆ Drop the recording or click to choose (max <?= (int)min(512, max(1, (int)(meeting_upload_limit() / 1048576))) ?> MB)</span></label>
+        <label class="check small"><input type="checkbox" name="meeting_held" value="1" checked> 1st meeting was held</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" type="submit">Upload video</button>
+        <?php if ($wsVideo !== ''): ?><button class="btn sm" type="submit" name="remove_video" value="1" formnovalidate onclick="return confirm('Remove the uploaded recording?')">Remove current video</button><?php endif; ?></div>
+      </form>
+      <form method="post" class="meet-pane" data-pane="none">
+        <?= csrf_field() ?><input type="hidden" name="action" value="meeting_no_recording"><input type="hidden" name="id" value="<?= (int)$id ?>">
+        <label class="f"><span>Why was it not recorded?</span><input name="meeting_note" maxlength="500" value="<?= h($wsRec['state'] === 'not_recorded' ? $wsRec['reason'] : '') ?>" placeholder="e.g. Student met in office, internet issue, student refused" list="meet-reasons" required></label>
+        <datalist id="meet-reasons"><option>Meeting held in office (not recorded)</option><option>Internet / Zoom issue</option><option>Student did not allow recording</option><option>Meeting not held yet</option><option>Recording lost / not saved</option></datalist>
+        <label class="check small"><input type="checkbox" name="meeting_held" value="1" <?= ($r['initial_meeting'] ?? '') === 'Yes' ? 'checked' : '' ?>> 1st meeting was held</label>
+        <button class="btn primary sm" type="submit">Save note</button>
+      </form>
+    </div>
+    <?php endif; ?>
+  </div>
 </section>

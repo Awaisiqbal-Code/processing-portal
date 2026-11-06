@@ -186,6 +186,72 @@ if (is_post() && post('action') === 'set_pstatus') {
     redirect($base . "/student.php?id={$id}");
 }
 
+// ---------- Payments ----------
+if (is_post() && post('action') === 'save_payment') {
+    csrf_check();
+    $no = (int)post('installment_no');
+    $res = save_payment($u, $id, $no, (string)(post('pay_status') ?: 'Pending'), post('pay_amount'), post('pay_date'), post('pay_method'), post('pay_note'));
+    flash($res['ok'] ? ordinal_label($no) . ' payment saved.' : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($base . "/student.php?id={$id}#payments");
+}
+
+// ---------- Meeting recording ----------
+if (is_post() && in_array(post('action'), ['meeting_save_link', 'meeting_upload_video', 'meeting_no_recording'], true)) {
+    csrf_check();
+    if (!can_update_journey($u)) { flash('You have read-only access to meetings.', 'bad'); redirect($base . "/student.php?id={$id}#meeting"); }
+    $held = post('meeting_held') === '1' ? 'Yes' : null;
+    $act = post('action');
+    $msg = null; $err = null; $set = [];
+    if ($act === 'meeting_save_link') {
+        $link = trim((string)post('meeting_link'));
+        if (!safe_link($link)) $err = 'Paste a full link starting with https://';
+        elseif ($link === trim((string)($r['drive_link'] ?? ''))) $err = 'That is the documents folder link. Paste the link of the recording itself.';
+        else { $set = ['meeting_link' => $link, 'recorded_uploaded' => 'Yes', 'meeting_note' => null]; $msg = 'Recording link saved.'; }
+    } elseif ($act === 'meeting_no_recording') {
+        $why = trim(mb_substr((string)post('meeting_note'), 0, 500));
+        if ($why === '') $err = 'Write why the meeting was not recorded.';
+        else {
+            $set = ['meeting_note' => $why, 'recorded_uploaded' => 'No'];
+            if (!safe_link((string)($r['meeting_link'] ?? ''))) $set['meeting_link'] = null;  // old sheets kept the reason here
+            $msg = 'Note saved: meeting not recorded.';
+        }
+    } else {
+        $oldVid = trim((string)($r['meeting_video_path'] ?? ''));
+        if (post('remove_video') === '1') {
+            if ($oldVid !== '' && is_file(ROOT . '/' . $oldVid)) @unlink(ROOT . '/' . $oldVid);
+            $set = ['meeting_video_path' => null, 'meeting_video_name' => null];
+            if (!student_meeting_url($r)) $set['recorded_uploaded'] = null;
+            $msg = 'Recording removed.'; $held = null;
+        } else {
+            $f = $_FILES['meeting_video'] ?? null;
+            $ext = strtolower(pathinfo((string)($f['name'] ?? ''), PATHINFO_EXTENSION));
+            if (!$f || ($f['error'] ?? 4) === UPLOAD_ERR_NO_FILE) $err = 'Choose the recording file first.';
+            elseif (in_array($f['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) $err = 'The file is larger than the server allows (' . (int)(meeting_upload_limit() / 1048576) . ' MB). Upload it to Drive and use the Link option instead.';
+            elseif ($f['error'] !== UPLOAD_ERR_OK) $err = 'Upload failed, please try again.';
+            elseif (!in_array($ext, ['mp4', 'mov', 'webm', 'mkv', 'm4v', 'm4a', 'mp3', 'wav', 'ogg'], true)) $err = 'Upload a video or audio file (mp4, mov, webm, mkv, m4a, mp3).';
+            else {
+                $dir = ROOT . '/uploads/meetings/' . $id;
+                if (!is_dir($dir)) @mkdir($dir, 0755, true);
+                $disk = 'meeting_' . time() . '_' . bin2hex(random_bytes(5)) . '.' . $ext;
+                if (is_dir($dir) && is_writable($dir) && move_uploaded_file($f['tmp_name'], $dir . '/' . $disk)) {
+                    if ($oldVid !== '' && is_file(ROOT . '/' . $oldVid)) @unlink(ROOT . '/' . $oldVid);
+                    $set = ['meeting_video_path' => 'uploads/meetings/' . $id . '/' . $disk, 'meeting_video_name' => basename((string)$f['name']), 'recorded_uploaded' => 'Yes', 'meeting_note' => null];
+                    $msg = 'Recording uploaded.';
+                } else $err = 'The server could not save the file here. Upload it to Drive and use the Link option instead.';
+            }
+        }
+    }
+    if ($err) { flash($err, 'bad'); redirect($base . "/student.php?id={$id}#meeting"); }
+    if ($held) $set['initial_meeting'] = 'Yes';
+    if ($set) {
+        $cols = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
+        q("UPDATE students SET $cols, updated_at = ? WHERE id = ?", array_merge(array_values($set), [now(), $id]));
+        log_activity('student', $id, 'meeting_updated', null, array_diff_key($set, ['meeting_video_path' => 1]), (int)$u['id']);
+    }
+    flash($msg ?? 'Saved.');
+    redirect($base . "/student.php?id={$id}#meeting");
+}
+
 // ---------- Communication history ----------
 if (is_post() && post('action') === 'add_comm') {
     csrf_check();
@@ -293,6 +359,13 @@ if (is_post() && post('action') === 'save') {
         }
     }
     if (!$data['name']) $errors[] = 'Enter the student name.';
+    if (array_key_exists('docs_source', $_POST)) {
+        $data['docs_source'] = in_array(post('docs_source'), ['drive', 'upload'], true) ? post('docs_source') : null;
+    }
+    // "nothing else needed" clears the old sheet note
+    if (array_key_exists('pending_docs_note', $_POST) && trim((string)post('pending_docs_note')) === '') {
+        $data['pending_docs_note'] = null;
+    }
 
     if ($admin) {
         if (array_key_exists('officer_id', $_POST) || $isNew) {
@@ -436,9 +509,9 @@ if (is_post() && post('action') === 'save') {
             }
 
             $docStatus = in_array($v, DOC_STATUS, true) ? $v : ($existingDoc['status'] ?? 'Pending');
-            if (empty($filePath) && ($docStatus === 'Received' || $docStatus === 'Verified' || $docStatus === '')) {
-                $docStatus = 'Pending';
-            }
+            // Received / Verified may be marked without an upload: the file can be in the student's Google Drive folder
+            if ($docStatus === '') $docStatus = 'Pending';
+            if ($filePath && $docStatus === 'Pending' && !empty($_FILES['doc_file_' . $i]['name'])) $docStatus = 'Received';
             if ($existingDoc) {
                 q('UPDATE student_documents SET status = ?, file_path = ?, file_name = ?, file_size = ?, mime_type = ?, uploaded_at = ?, uploaded_by = ?, updated_by = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?',
                   [$docStatus, $filePath, $fileName, $fileSize, $mimeType, $uploadedAt, $uploadedBy, (int)$u['id'], now(), $id, $i]);
@@ -514,25 +587,6 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 ?>
 <p class="small"><a href="<?= h(url($base . '/students.php' . ($activeCountry ? '?country=' . rawurlencode($activeCountry) : ''))) ?>">← Back to <?= h($activeCountry) ?> students</a></p>
 
-<!-- Country Sheet Entry Format Selector Bar -->
-<div style="background:var(--surface); border:1.5px solid var(--border); border-radius:8px; padding:0.75rem 1rem; margin-bottom:1.15rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.65rem;">
-  <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
-    <span class="small" style="font-weight:700; color:var(--fg); margin-right:0.3rem;">📋 Sheet Format / Country:</span>
-    <?php
-      $cFlags = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
-      foreach (SUPPORTED_COUNTRIES as $cOpt):
-          $switchHref = $isNew
-              ? url($base . '/student.php?new=1&country=' . rawurlencode($cOpt))
-              : url($base . '/student.php?id=' . (int)$id . '&country=' . rawurlencode($cOpt));
-    ?>
-      <a href="<?= h($switchHref) ?>" class="btn sm <?= $activeCountry === $cOpt ? 'primary' : 'ghost' ?>" style="font-weight:600;">
-        <?= $cFlags[$cOpt] ?? '📍' ?> <?= h($cOpt) ?> Sheet
-      </a>
-    <?php endforeach; ?>
-  </div>
-  <span class="small muted">Form fields automatically match the <b><?= h($activeCountry) ?></b> centralized processing sheet</span>
-</div>
-
 <!-- Branch 30% Legacy Data Error Flag (If unresolved in record) -->
 <?php if (!$isNew && (($r['branch'] ?? '') === '30%')): ?>
 <div class="flash bad" style="border-left:5px solid #dc2626; margin-bottom:1rem; background:rgba(239,68,68,0.08); border-color:#dc2626;">
@@ -550,9 +604,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 <div class="panel-h">
   <div>
     <h1><?= $isNew ? 'Add student' : h($r['name']) ?></h1>
-    <?php if (!$isNew): $ns = next_stage($r); ?>
-      <p><a href="<?= h(url($base . '/progress.php?id=' . (int)$id)) ?>" title="View student progress" style="text-decoration:none;"><?= progress_dots($r) ?></a> <?= $ns ? 'Next step: <b>' . h($ns) . '</b>' : '<b>Closed</b>' ?></p>
-    <?php endif; ?>
+
   </div>
   <?php if (!$isNew): 
     $dl = safe_link($r['drive_link'] ?? '');
@@ -664,10 +716,31 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   <input type="hidden" name="action" value="save">
   <input type="hidden" name="mode" value="<?= $isNew ? 'new' : 'edit' ?>">
   <input type="hidden" name="id" value="<?= (int)$id ?>">
+<!-- Country Sheet Entry Format Selector Bar -->
+<div class="sheet-switch">
+  <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
+    <span class="small" style="font-weight:700; color:var(--fg); margin-right:0.3rem;">Sheet format:</span>
+    <?php
+      $cFlags = country_flags_map();
+      foreach (SUPPORTED_COUNTRIES as $cOpt):
+          $switchHref = $isNew
+              ? url($base . '/student.php?new=1&country=' . rawurlencode($cOpt))
+              : url($base . '/student.php?id=' . (int)$id . '&country=' . rawurlencode($cOpt));
+    ?>
+      <a href="<?= h($switchHref) ?>" class="btn sm <?= $activeCountry === $cOpt ? 'primary' : 'ghost' ?>" style="font-weight:600;">
+        <?= $cFlags[$cOpt] ?? '📍' ?> <?= h($cOpt) ?> Sheet
+      </a>
+    <?php endforeach; ?>
+  </div>
+  <span class="small muted">Form fields automatically match the <b><?= h($activeCountry) ?></b> centralized processing sheet</span>
+</div>
+
 
   <?php foreach ($activeFieldGroups as $group => $fields): ?>
-  <fieldset><legend><?= h($group) ?></legend><div class="fields">
+  <fieldset><legend><?= country_flag($activeCountry) ?> <?= h($group) ?></legend><div class="fields">
     <?php foreach ($fields as $k => $f):
+        if (!$isNew && in_array($k, ['drive_link', 'meeting_link', 'pending_docs_note', 'docs_checklist'], true)) continue;  // shown in Documents / Meeting sections
+        if ($isNew && in_array($k, ['pending_docs_note', 'docs_checklist'], true)) continue;
         $v = (string)($r[$k] ?? '');
         $wide = in_array($f[1], ['textarea', 'readonly_textarea', 'url'], true) || in_array($k, ['disc2', 'disc3'], true) ? ' wide' : ''; ?>
       <label class="f<?= $wide ?>"><span><?= h($f[0]) ?><?= $k === 'name' ? ' *' : '' ?></span>
@@ -751,95 +824,87 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   </fieldset>
   <?php endif; ?>
 
-  <fieldset id="documents"><legend>Documents &amp; Attachments</legend>
+  <fieldset id="documents" class="docs-box" data-src="<?= h($docsSrc = (($r['docs_source'] ?? '') ?: (safe_link($r['drive_link'] ?? '') ? 'drive' : 'upload'))) ?>"><legend>Documents</legend>
     <?php
-      $dsTotal = count(DOCS);
-      $dsCounts = ['Verified' => 0, 'Received' => 0, 'Requested' => 0, 'Pending' => 0, '' => 0];
-      $dsMissing = [];
-      foreach (DOCS as $di => $dn) {
-          $dst = (string)($docs[$di] ?? '');
-          $hasF = !empty($docRows[$di]['file_path']);
-          if (in_array($dst, ['Received', 'Verified'], true) && $hasF) { $dsCounts[$dst]++; }
-          else { $dsCounts[$dst === 'Requested' ? 'Requested' : ($dst === 'Pending' ? 'Pending' : '')]++; if ($di < 9 || $dst !== '') $dsMissing[] = $dn; }
-      }
-      $dsDone = $dsCounts['Verified'] + $dsCounts['Received'];
-      $dsPct = (int)round($dsDone / max(1, $dsTotal) * 100);
-      $dsNote = trim((string)($r['pending_docs_note'] ?? ''));
+      $dsInfo = student_pending_docs($r, array_map(fn($d) => $d === 'Uploaded' ? 'Received' : $d, $docs));
+      $dsPct = (int)round($dsInfo['in_hand'] / max(1, $dsInfo['required']) * 100);
       $dsMsg = "Assalam o Alaikum " . ($r['name'] ?? '') . ",\nFor your " . ($r['country'] ?? '') . " file, please share the following documents:\n"
-             . implode("\n", array_map(fn($x) => '• ' . $x, $dsMissing))
-             . (!doc_note_is_empty($dsNote) ? "\n\nAlso pending: " . $dsNote : '')
+             . implode("\n", array_map(fn($x) => '• ' . $x, $dsInfo['missing']))
              . "\n\nRegards,\n" . $u['name'] . "\nScholarshipHive Edutancy";
       $dsWa = preg_replace('/\D+/', '', (string)($r['contact_number'] ?? ''));
       if (str_starts_with($dsWa, '0')) $dsWa = '92' . substr($dsWa, 1);
     ?>
     <?php if (!$isNew): ?>
     <div class="doc-summary">
-      <div class="doc-summary-bar"><i style="width:<?= $dsPct ?>%"></i></div>
       <div class="doc-summary-row">
-        <b><?= $dsDone ?> / <?= $dsTotal ?> documents in hand</b>
-        <span class="pill sm ok">✓ Verified <?= $dsCounts['Verified'] ?></span>
-        <span class="pill sm acc">Received <?= $dsCounts['Received'] ?></span>
-        <span class="pill sm warn">Requested <?= $dsCounts['Requested'] ?></span>
-        <span class="pill sm bad">Pending <?= $dsCounts['Pending'] + $dsCounts[''] ?></span>
+        <?php if ($dsInfo['complete']): ?>
+          <span class="pill ok">✓ All required documents received</span>
+        <?php else: ?>
+          <b class="bad-t"><?= $dsInfo['count'] ?> document<?= $dsInfo['count'] === 1 ? '' : 's' ?> pending</b>
+          <span class="muted small">· <?= $dsInfo['in_hand'] ?> of <?= $dsInfo['required'] ?> required in hand</span>
+        <?php endif; ?>
         <span style="flex:1"></span>
-        <?php if ($dsMissing && !$isCounselor): ?>
-          <button type="button" class="btn sm" data-copy-text="<?= h(str_replace('\n', "
-", $dsMsg)) ?>">📋 Copy document request</button>
-          <?php if (strlen($dsWa) >= 10): ?><a class="btn sm" target="_blank" rel="noopener noreferrer" href="https://wa.me/<?= h($dsWa) ?>?text=<?= rawurlencode(str_replace('\n', "
-", $dsMsg)) ?>">💬 Send on WhatsApp</a><?php endif; ?>
+        <?php if (!$dsInfo['complete'] && !$isCounselor): ?>
+          <button type="button" class="btn sm" data-mark-all-docs title="Ticks every required document as Received — then press Save">✓ Mark all received</button>
+          <button type="button" class="btn sm" data-copy-text="<?= h($dsMsg) ?>">📋 Copy request</button>
+          <?php if (strlen($dsWa) >= 10): ?><a class="btn sm" target="_blank" rel="noopener noreferrer" href="https://wa.me/<?= h($dsWa) ?>?text=<?= rawurlencode($dsMsg) ?>">💬 WhatsApp request</a><?php endif; ?>
         <?php endif; ?>
       </div>
-      <?php if (!doc_note_is_empty($dsNote)): ?><div class="doc-note">📝 <b>Pending documents note:</b> <?= h($dsNote) ?></div><?php endif; ?>
+      <div class="doc-summary-bar"><i style="width:<?= $dsPct ?>%"></i></div>
+      <?php if (!$dsInfo['complete']): ?><div class="chip-row"><?php foreach ($dsInfo['missing'] as $mdoc): ?><span class="doc-chip"><?= h($mdoc) ?></span><?php endforeach; ?></div><?php endif; ?>
     </div>
     <?php endif; ?>
-    <p class="muted small">Update document statuses and view, download, or upload verified document files. Drop a file on a card or click “Choose file”.</p>
+
+    <div class="src-switch" role="radiogroup" aria-label="Where are the documents kept?">
+      <span class="small muted">Where are this student's documents?</span>
+      <label><input type="radio" name="docs_source" value="drive" <?= $docsSrc === 'drive' ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span>📁 In Google Drive</span></label>
+      <label><input type="radio" name="docs_source" value="upload" <?= $docsSrc === 'upload' ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span>⬆ Upload here</span></label>
+    </div>
+    <div class="src-drive">
+      <label class="f"><span>Google Drive folder link</span>
+        <div class="input-row"><input type="url" name="drive_link" value="<?= h($r['drive_link'] ?? '') ?>" placeholder="https://drive.google.com/drive/folders/…" <?= $isCounselor ? 'readonly' : '' ?>>
+        <?php if ($dlk = safe_link($r['drive_link'] ?? '')): ?><a class="btn sm" href="<?= h($dlk) ?>" target="_blank" rel="noopener noreferrer">Open folder ↗</a><?php endif; ?></div>
+      </label>
+      <p class="small muted">Files stay in Drive. Just tick each document below as <b>Received</b> once it is in the folder.</p>
+    </div>
+
     <div class="doc-grid">
-    <?php foreach (DOCS as $i => $d): 
-      $v = $docs[$i] ?? ''; 
+    <?php foreach (DOCS as $i => $d):
+      $v = $docs[$i] ?? '';
+      if ($v === 'Uploaded') $v = 'Received';
       $dRow = $docRows[$i] ?? null;
       $hasFile = !empty($dRow['file_path']);
+      $inDrive = $hasFile && str_starts_with((string)$dRow['file_path'], 'gdrive:');
       $fileName = $dRow['file_name'] ?? '';
       $fileKb = round(($dRow['file_size'] ?? 0) / 1024, 1);
+      $optional = $i >= 9 || ($i === 4 && strtoupper((string)($r['program_level'] ?? '')) === 'BS');
     ?>
-      <div class="doc-card ds-<?= h(strtolower($v ?: 'none')) ?><?= $hasFile ? ' has-file' : '' ?>">
-        <div>
-          <span style="font-weight:600; font-size:0.85rem; display:block;"><?= h($d) ?></span>
-          <?php if ($hasFile): ?>
-            <div class="doc-attachment-box">
-              <div class="doc-attachment-name">📎 <?= h($fileName) ?><?php if ($fileKb > 0): ?> <span class="muted" style="font-size:0.75rem;">(<?= $fileKb ?> KB)</span><?php endif; ?></div>
-              <div style="display:flex; gap:0.4rem; align-items:center; margin-top:0.3rem;">
-                <a class="btn sm" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i)) ?>" target="_blank">📄 View</a>
-                <a class="btn sm primary" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i . '&download=1')) ?>">⬇ Download</a>
-                <?php if (!$isCounselor): ?>
-                  <label class="small check doc-remove-label">
-                    <input type="checkbox" name="remove_doc_file_<?= $i ?>" value="1"> Remove
-                  </label>
-                <?php endif; ?>
-              </div>
+      <div class="doc-card ds-<?= h(strtolower(str_replace(' ', '-', $v ?: 'none'))) ?><?= $hasFile ? ' has-file' : '' ?><?= $optional ? ' is-optional' : '' ?>">
+        <div class="doc-head"><b><?= h($d) ?></b><?php if ($optional): ?><span class="pill sm">later / optional</span><?php endif; ?><?php if ($inDrive): ?><span class="pill sm acc">in Drive</span><?php endif; ?></div>
+        <?php if ($hasFile): ?>
+          <div class="doc-attachment-box">
+            <div class="doc-attachment-name">📎 <?= h($fileName) ?><?php if ($fileKb > 0): ?> <span class="muted" style="font-size:0.75rem;">(<?= $fileKb ?> KB)</span><?php endif; ?></div>
+            <div style="display:flex; gap:0.4rem; align-items:center; margin-top:0.3rem;">
+              <a class="btn sm" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i)) ?>" target="_blank">View</a>
+              <a class="btn sm" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i . '&download=1')) ?>">⬇</a>
+              <?php if (!$isCounselor && !$inDrive): ?><label class="small check doc-remove-label"><input type="checkbox" name="remove_doc_file_<?= $i ?>" value="1"> Remove</label><?php endif; ?>
             </div>
-          <?php endif; ?>
-          <?php if (!$isCounselor): ?>
-          <div style="margin-top: 0.35rem;">
-            <label class="small muted" style="display:block; margin-bottom:0.15rem;"><?= $hasFile ? 'Replace File (Max 15MB):' : 'Attach File (PDF, Images, Word):' ?></label>
-            <label class="dropzone"><input type="file" name="doc_file_<?= $i ?>" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.zip"><span data-dz-label>⬆ Drop file or click to choose</span></label>
           </div>
-          <?php endif; ?>
-        </div>
-        <div style="margin-top: 0.5rem;">
-          <label class="f">
-            <span>Status</span>
-            <select name="doc_<?= $i ?>" <?= (!$hasFile ? 'title="Attach a file to mark as Received or Verified"' : '') ?> <?= $isCounselor ? 'disabled' : '' ?>>
-              <?php foreach (DOC_STATUS as $opt): 
-                $dis = (!$hasFile && ($opt === 'Received' || $opt === 'Verified')) ? 'disabled' : '';
-              ?>
-                <option value="<?= h($opt) ?>" <?= $v === $opt ? 'selected' : '' ?> <?= $dis ?>><?= $opt === '' ? 'Not set' : h($opt) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </label>
+        <?php endif; ?>
+        <?php if (!$isCounselor): ?>
+          <label class="dropzone src-upload-only"><input type="file" name="doc_file_<?= $i ?>" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.zip"><span data-dz-label>⬆ <?= $hasFile ? 'Replace file' : 'Drop file or click to upload' ?></span></label>
+        <?php endif; ?>
+        <div class="seg seg-sm doc-status" role="radiogroup" aria-label="<?= h($d) ?> status">
+          <?php foreach (['Pending' => 'Pending', 'Requested' => 'Asked', 'Received' => 'Received', 'Verified' => 'Verified', 'Not Required' => 'N/A'] as $ov => $ol): ?>
+            <label title="<?= h($ov) ?>"><input type="radio" name="doc_<?= $i ?>" value="<?= h($ov) ?>" <?= ($v === $ov || ($v === '' && $ov === 'Pending')) ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span><?= h($ol) ?></span></label>
+          <?php endforeach; ?>
         </div>
       </div>
     <?php endforeach; ?>
     </div>
+    <label class="f" style="margin-top:12px;"><span>Other documents still needed <small class="muted">(not in the list above — e.g. LOR, experience letter; leave empty when nothing else is needed)</small></span>
+      <input name="pending_docs_note" value="<?= h(doc_note_is_empty($r['pending_docs_note'] ?? '') ? '' : ($r['pending_docs_note'] ?? '')) ?>" placeholder="e.g. LOR, Experience letter" <?= $isCounselor ? 'readonly' : '' ?>>
+    </label>
   </fieldset>
 
   <div class="actions">

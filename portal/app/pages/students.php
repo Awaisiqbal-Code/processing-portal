@@ -218,7 +218,7 @@ $rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name, fo.nam
 
 // In-memory stage filters
 if ($fs !== '') $rows = array_values(array_filter($rows, fn($r) => $fs === 'closed' ? next_stage($r) === null : next_stage($r) === $fs));
-if ($fk === 'onboarding') $rows = array_values(array_filter($rows, fn($r) => $r['consent'] !== 'Yes' || $r['docs_checklist'] !== 'Yes' || $r['initial_meeting'] !== 'Yes'));
+if ($fk === 'onboarding') $rows = array_values(array_filter($rows, fn($r) => ($r['student_status'] ?? 'active') === 'active' && ($r['consent'] !== 'Yes' || $r['initial_meeting'] !== 'Yes' || !student_pending_docs($r, load_doc_state([(int)$r['id']])[(int)$r['id']] ?? [])['complete'])));
 if ($fk === 'offers') $rows = array_values(array_filter($rows, fn($r) => $r['offer'] === 'Yes'));
 if ($fk === 'visa_granted') $rows = array_values(array_filter($rows, fn($r) => $r['visa'] === 'Granted'));
 if ($fd !== '' && isset(STAGES[(int)$fd])) $rows = array_values(array_filter($rows, fn($r) => stage_done($r, (int)$fd)));
@@ -232,19 +232,28 @@ if ($allIds) {
     foreach (q("SELECT * FROM student_stages WHERE student_id IN ($ph)", $allIds) as $sr) $stageRowsBy[(int)$sr['student_id']][$sr['stage_key']] = $sr;
     foreach (q("SELECT student_id, status FROM student_applications WHERE student_id IN ($ph)", $allIds) as $ar) $appStatusBy[(int)$ar['student_id']][] = $ar;
 }
+$listDocState = load_doc_state($allIds ?: [0]);
 $staffNames = staff_name_map();
 $statusCounts = array_fill_keys(PROCESSING_STATUSES, 0);
 foreach ($rows as $i => $r) {
     $sid = (int)$r['id'];
     $saved = $stageRowsBy[$sid] ?? [];
     $apps = $appStatusBy[$sid] ?? [];
-    // light journey (no per-row doc query): auto + saved rows
+    $r['_doc_info'] = student_pending_docs($r, $listDocState[$sid] ?? []);
+    $rows[$i]['_doc_info'] = $r['_doc_info'];
     $auto = auto_journey($r, $apps, 0);
     $j = [];
     foreach (JOURNEY_STAGES as $k => $_) $j[$k] = ['status' => isset($saved[$k]) ? $saved[$k]['status'] : $auto[$k][0], 'label' => JOURNEY_STAGES[$k][0]];
     $rows[$i]['_journey'] = $j;
     $rows[$i]['_pstatus'] = processing_status($r, $j);
     $statusCounts[$rows[$i]['_pstatus']]++;
+}
+$fjnow = get('jnow');
+if ($fjnow !== '' && isset(JOURNEY_STAGES[$fjnow])) {
+    $rows = array_values(array_filter($rows, function ($r) use ($fjnow) {
+        foreach ($r['_journey'] as $k => $st) if ($st['status'] !== 'Completed') return $k === $fjnow && ($r['student_status'] ?? 'active') === 'active';
+        return false;
+    }));
 }
 if ($fps !== '' && in_array($fps, PROCESSING_STATUSES, true)) {
     $rows = array_values(array_filter($rows, fn($r) => $r['_pstatus'] === $fps));
@@ -318,7 +327,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
       All Countries <span class="pill sm" style="margin-left:0.3rem;"><?= $cntAll ?></span>
     </a>
     <?php
-      $flagMap = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+      $flagMap = country_flags_map();
       foreach ($countryCounts as $cName => $cCnt):
           if ($cName === 'Not set') continue;
           $flag = $flagMap[$cName] ?? '📍';
@@ -374,6 +383,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     if ($fr !== '')     $activeFilters['refund'] = 'Refund: ' . $fr;
     if ($fs !== '')     $activeFilters['stage'] = 'Next Step: ' . $fs;
     if ($fps !== '')    $activeFilters['pstatus'] = 'Status: ' . $fps;
+    if ($fjnow !== '' && isset(JOURNEY_STAGES[$fjnow])) $activeFilters['jnow'] = 'Now at: ' . JOURNEY_STAGES[$fjnow][0];
     if ($fk !== '')     $activeFilters['kpi'] = 'KPI: ' . ucfirst(str_replace('_', ' ', $fk));
     if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Stage Done: ' . STAGES[(int)$fd][0];
   ?>
@@ -529,7 +539,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
   <?php endif; ?>
 
   <?php
-    $flagMapAll = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+    $flagMapAll = country_flags_map();
     $journeyBar = function (array $j): string {
         $html = '<span class="jbar" title="Processing journey">';
         foreach ($j as $st) $html .= '<i class="' . stage_status_class($st['status']) . '" title="' . h($st['label'] . ': ' . $st['status']) . '"></i>';

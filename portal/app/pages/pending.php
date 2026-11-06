@@ -1,17 +1,15 @@
 <?php
 declare(strict_types=1);
-// Comprehensive Pending Data & Workload Breakdown Page (Admin & Officer)
-// Shows every category of pending items by Officer, by Country, by Counselor, and Student-by-Student.
+// Pending Tracker — one clear rule per category, every student counted once per category.
+// Expects $u.
 
 [$w, $p] = scope_sql($u);
 $admin = is_admin_role($u['role']);
+$isLead = $admin || $u['role'] === 'pms_lead';
 $base = $admin ? 'admin' : 'officer';
 
 $rows = q("
-    SELECT s.*,
-           o.name AS officer_name,
-           o.department AS officer_dept,
-           fo.name AS fe_user_name,
+    SELECT s.*, o.name AS officer_name, fo.name AS fe_user_name,
            (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
            (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
            (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
@@ -19,698 +17,227 @@ $rows = q("
     FROM students s
     LEFT JOIN users o ON o.id = s.officer_id
     LEFT JOIN users fo ON fo.id = s.frontend_officer_id
-    WHERE $w
+    WHERE $w AND s.student_status = 'active'
     ORDER BY s.id ASC
 ", $p)->fetchAll();
 
-// Load document counts per student from student_documents
-$docStatsByStudent = [];
-$docRows = q("
-    SELECT student_id, doc_index, status, file_path
-    FROM student_documents
-")->fetchAll();
+$docState = load_doc_state();
+$appCounts = [];
+foreach (q('SELECT student_id, COUNT(*) AS cnt FROM student_applications GROUP BY student_id') as $ar) $appCounts[(int)$ar['student_id']] = (int)$ar['cnt'];
 
-$coreDocIndices = [
-    0 => 'Passport',
-    1 => 'CNIC',
-    2 => 'Matric',
-    3 => 'Inter',
-    4 => 'Bachelor/Transcript',
-    5 => 'IELTS/Language',
-    6 => 'CV',
-    7 => 'Bank Statement',
-    8 => 'Tax/FBR',
-];
-
-foreach ($docRows as $dr) {
-    $sid = (int)$dr['student_id'];
-    $idx = (int)$dr['doc_index'];
-    $hasRealFile = !empty($dr['file_path']);
-    if (!isset($docStatsByStudent[$sid])) {
-        $docStatsByStudent[$sid] = [
-            'received'     => 0,
-            'pending'      => 0,
-            'missing_core' => $coreDocIndices,
-        ];
-    }
-    if ($hasRealFile && in_array($dr['status'], ['Received', 'Verified'], true)) {
-        $docStatsByStudent[$sid]['received']++;
-        unset($docStatsByStudent[$sid]['missing_core'][$idx]);
-    } else {
-        $docStatsByStudent[$sid]['pending']++;
-    }
-}
-
-// Load university application counts per student
-$appCountsByStudent = [];
-foreach (q("SELECT student_id, COUNT(*) AS cnt FROM student_applications GROUP BY student_id")->fetchAll() as $ar) {
-    $appCountsByStudent[(int)$ar['student_id']] = (int)$ar['cnt'];
-}
-
-// evaluate_student_pending() now lives in app/workflow.php (shared with Officer Pending Reports)
-
-// Compute pending analysis for all students in scope
-$enriched = [];
-$totals = [
-    'students'       => count($rows),
-    'any'            => 0,
-    'docs'           => 0,
-    'checklist_open' => 0,
-    'has_doc_note'   => 0,
-    'consent'        => 0,
-    'meetings'       => 0,
-    'second_tax'     => 0,
-    'shortlisting'   => 0,
-    'credentials'    => 0,
-    'remarks'        => 0,
-    'pending_timer'  => 0,
-];
-
-// Aggregations per Officer, per Country, per Counselor
+$CATS = ['all' => 'Any pending'] + PENDING_TASKS;
+$blankCounts = fn() => array_fill_keys(array_merge(['students', 'any'], array_keys(PENDING_TASKS)), 0);
+$totals = $blankCounts();
 $byOfficer = [];
-$officersList = q("SELECT id, name, username, role, active, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') ORDER BY department ASC, name ASC")->fetchAll();
-foreach ($officersList as $o) {
-    $oid = (int)$o['id'];
-    $byOfficer[$oid] = [
-        'id'             => $oid,
-        'name'           => $o['name'],
-        'department'     => $o['department'],
-        'role'           => $o['role'],
-        'countries'      => [],
-        'total'          => 0,
-        'any'            => 0,
-        'consent'        => 0,
-        'docs'           => 0,
-        'checklist_open' => 0,
-        'has_doc_note'   => 0,
-        'missing_files'  => 0,
-        'first_meeting'  => 0,
-        'recording'      => 0,
-        'second_tax'     => 0,
-        'shortlisting'   => 0,
-        'credentials'    => 0,
-        'remarks'        => 0,
-    ];
-}
-
+$officersList = q("SELECT id, name, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer','pms_lead','processing_staff') AND active = 1 ORDER BY CASE WHEN department = 'frontend' THEN 0 ELSE 1 END, name COLLATE NOCASE")->fetchAll();
+foreach ($officersList as $o) $byOfficer[(int)$o['id']] = $o + ['c' => $blankCounts(), 'countries' => []];
 $byCountry = [];
-$byCounselor = [];
+$docFreq = [];
 
-foreach ($rows as $r) {
+foreach ($rows as $i => $r) {
     $sid = (int)$r['id'];
-    $dStats = $docStatsByStudent[$sid] ?? ['received' => 0, 'pending' => 12, 'missing_core' => $coreDocIndices];
-    $appCnt = $appCountsByStudent[$sid] ?? 0;
-    $pInfo = evaluate_student_pending($r, $dStats, $appCnt);
-
-    $r['_pending'] = $pInfo;
-    $enriched[] = $r;
-
-    if ($pInfo['any'])            $totals['any']++;
-    if ($pInfo['docs'])           $totals['docs']++;
-    if ($pInfo['checklist_open']) $totals['checklist_open']++;
-    if ($pInfo['has_doc_note'])   $totals['has_doc_note']++;
-    if ($pInfo['consent'])        $totals['consent']++;
-    if ($pInfo['meetings'])       $totals['meetings']++;
-    if ($pInfo['second_tax'])     $totals['second_tax']++;
-    if ($pInfo['shortlisting'])   $totals['shortlisting']++;
-    if ($pInfo['credentials'])    $totals['credentials']++;
-    if ($pInfo['remarks'])        $totals['remarks']++;
-    if ($pInfo['pending_timer'])  $totals['pending_timer']++;
-
-    // Officer aggregation (credit both Backend officer_id and Frontend frontend_officer_id)
-    $cName = trim((string)($r['country'] ?? 'Italy')) ?: 'Italy';
-    $assignedOids = array_unique(array_filter([(int)($r['officer_id'] ?? 0), (int)($r['frontend_officer_id'] ?? 0)]));
-    foreach ($assignedOids as $oid) {
-        if (!isset($byOfficer[$oid])) continue;
-        $byOfficer[$oid]['total']++;
-        $byOfficer[$oid]['countries'][$cName] = true;
-        if ($pInfo['any'])            $byOfficer[$oid]['any']++;
-        if ($pInfo['consent'])        $byOfficer[$oid]['consent']++;
-        if ($pInfo['docs'])           $byOfficer[$oid]['docs']++;
-        if ($pInfo['checklist_open']) $byOfficer[$oid]['checklist_open']++;
-        if ($pInfo['has_doc_note'])   $byOfficer[$oid]['has_doc_note']++;
-        $byOfficer[$oid]['missing_files'] += count($pInfo['missing_core']);
-        if ($pInfo['first_meeting'])  $byOfficer[$oid]['first_meeting']++;
-        if ($pInfo['recording'])      $byOfficer[$oid]['recording']++;
-        if ($pInfo['second_tax'])     $byOfficer[$oid]['second_tax']++;
-        if ($pInfo['shortlisting'])   $byOfficer[$oid]['shortlisting']++;
-        if ($pInfo['credentials'])    $byOfficer[$oid]['credentials']++;
-        if ($pInfo['remarks'])        $byOfficer[$oid]['remarks']++;
-    }
-
-    // Country aggregation
-    if (!isset($byCountry[$cName])) {
-        $byCountry[$cName] = [
-            'country'        => $cName,
-            'total'          => 0,
-            'any'            => 0,
-            'consent'        => 0,
-            'docs'           => 0,
-            'checklist_open' => 0,
-            'has_doc_note'   => 0,
-            'missing_files'  => 0,
-            'meetings'       => 0,
-            'second_tax'     => 0,
-            'shortlisting'   => 0,
-            'credentials'    => 0,
-            'remarks'        => 0,
-        ];
-    }
-    $byCountry[$cName]['total']++;
-    if ($pInfo['any'])            $byCountry[$cName]['any']++;
-    if ($pInfo['consent'])        $byCountry[$cName]['consent']++;
-    if ($pInfo['docs'])           $byCountry[$cName]['docs']++;
-    if ($pInfo['checklist_open']) $byCountry[$cName]['checklist_open']++;
-    if ($pInfo['has_doc_note'])   $byCountry[$cName]['has_doc_note']++;
-    $byCountry[$cName]['missing_files'] += count($pInfo['missing_core']);
-    if ($pInfo['meetings'])       $byCountry[$cName]['meetings']++;
-    if ($pInfo['second_tax'])     $byCountry[$cName]['second_tax']++;
-    if ($pInfo['shortlisting'])   $byCountry[$cName]['shortlisting']++;
-    if ($pInfo['credentials'])    $byCountry[$cName]['credentials']++;
-    if ($pInfo['remarks'])        $byCountry[$cName]['remarks']++;
-
-    // Counselor aggregation
-    $counName = trim((string)($r['counselor'] ?? '')) ?: 'Unassigned';
-    if (!isset($byCounselor[$counName])) {
-        $byCounselor[$counName] = [
-            'counselor'      => $counName,
-            'countries'      => [],
-            'total'          => 0,
-            'any'            => 0,
-            'consent'        => 0,
-            'docs'           => 0,
-            'has_doc_note'   => 0,
-            'meetings'       => 0,
-            'shortlisting'   => 0,
-            'remarks'        => 0,
-        ];
-    }
-    $byCounselor[$counName]['total']++;
-    $byCounselor[$counName]['countries'][$cName] = true;
-    if ($pInfo['any'])          $byCounselor[$counName]['any']++;
-    if ($pInfo['consent'])      $byCounselor[$counName]['consent']++;
-    if ($pInfo['docs'])         $byCounselor[$counName]['docs']++;
-    if ($pInfo['has_doc_note']) $byCounselor[$counName]['has_doc_note']++;
-    if ($pInfo['meetings'])     $byCounselor[$counName]['meetings']++;
-    if ($pInfo['shortlisting']) $byCounselor[$counName]['shortlisting']++;
-    if ($pInfo['remarks'])      $byCounselor[$counName]['remarks']++;
-}
-
-uasort($byCountry, fn($a, $b) => $b['total'] <=> $a['total']);
-uasort($byCounselor, fn($a, $b) => $b['total'] <=> $a['total']);
-
-// Active Filters
-$catFilter       = strtolower(trim((string)(get('cat') ?: 'all')));
-$countryFilter   = trim((string)(get('country') ?: ''));
-$officerFilter   = (int)(get('officer') ?: 0);
-$counselorFilter = trim((string)(get('counselor') ?: ''));
-$levelFilter     = strtoupper(trim((string)(get('program_level') ?: '')));
-$qFilter         = trim((string)(get('q') ?: ''));
-
-$filteredStudents = array_filter($enriched, function (array $r) use ($catFilter, $countryFilter, $officerFilter, $counselorFilter, $levelFilter, $qFilter): bool {
-    $p = $r['_pending'];
-    $matchCat = match ($catFilter) {
-        'docs'           => $p['docs'],
-        'checklist_open' => $p['checklist_open'],
-        'doc_note'       => $p['has_doc_note'],
-        'consent'        => $p['consent'],
-        'meetings'       => $p['meetings'],
-        'first_meeting'  => $p['first_meeting'],
-        'recording'      => $p['recording'],
-        'second_tax'     => $p['second_tax'],
-        'shortlisting'   => $p['shortlisting'],
-        'credentials'    => $p['credentials'],
-        'remarks'        => $p['remarks'],
-        'timer'          => $p['pending_timer'],
-        default          => $p['any'],
+    $pi = student_pending($r, $docState[$sid] ?? [], $appCounts[$sid] ?? 0);
+    $rows[$i]['_p'] = $pi;
+    $add = function (array &$c) use ($pi) {
+        $c['students']++;
+        if ($pi['any']) $c['any']++;
+        foreach (PENDING_TASKS as $k => $_) if ($pi[$k]) $c[$k]++;
     };
-    if (!$matchCat) return false;
-
-    if ($countryFilter !== '' && strcasecmp((string)($r['country'] ?? ''), $countryFilter) !== 0) {
-        return false;
+    $add($totals);
+    $cn = trim((string)($r['country'] ?? '')) ?: 'Not set';
+    if (!isset($byCountry[$cn])) $byCountry[$cn] = $blankCounts();
+    $add($byCountry[$cn]);
+    foreach (array_unique(array_filter([(int)$r['officer_id'], (int)$r['frontend_officer_id']])) as $oid) {
+        if (!isset($byOfficer[$oid])) continue;
+        $add($byOfficer[$oid]['c']);
+        $byOfficer[$oid]['countries'][$cn] = true;
     }
-    if ($officerFilter > 0 && (int)($r['officer_id'] ?? 0) !== $officerFilter && (int)($r['frontend_officer_id'] ?? 0) !== $officerFilter) {
-        return false;
-    }
-    if ($counselorFilter !== '' && strcasecmp(trim((string)($r['counselor'] ?? '')), $counselorFilter) !== 0) {
-        return false;
-    }
-    if ($levelFilter !== '' && strcasecmp((string)($r['program_level'] ?? ''), $levelFilter) !== 0) {
-        return false;
-    }
-    if ($qFilter !== '') {
-        $hay = strtolower(($r['name'] ?? '') . ' ' . ($r['email'] ?? '') . ' ' . ($r['pending_docs_note'] ?? '') . ' ' . ($r['remarks'] ?? '') . ' ' . ($r['counselor'] ?? ''));
-        if (!str_contains($hay, strtolower($qFilter))) return false;
-    }
-    return true;
-});
-
-function pending_filter_url(string $base, array $overrides = []): string {
-    $params = [
-        'cat'           => get('cat') ?: 'all',
-        'country'       => get('country') ?: '',
-        'officer'       => get('officer') ?: '',
-        'counselor'     => get('counselor') ?: '',
-        'program_level' => get('program_level') ?: '',
-        'q'             => get('q') ?: '',
-    ];
-    foreach ($overrides as $k => $v) {
-        $params[$k] = $v;
-    }
-    $clean = array_filter($params, fn($v) => $v !== '' && $v !== null && $v !== 0 && $v !== '0');
-    return url($base . '/pending.php' . ($clean ? '?' . http_build_query($clean) : ''));
+    foreach ($pi['docs_missing'] as $d) $docFreq[$d] = ($docFreq[$d] ?? 0) + 1;
 }
+uasort($byCountry, fn($a, $b) => $b['students'] <=> $a['students']);
+arsort($docFreq);
 
-$flagMap = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+// ---------- filters ----------
+$cat = get('cat') ?: 'all';
+if (!isset($CATS[$cat])) $cat = 'all';
+$fCountry = get('country');
+$fOfficer = (int)get('officer');
+$fLevel = strtoupper(get('program_level'));
+$fDoc = get('doc');
+$fq = get('q');
+$list = array_values(array_filter($rows, function ($r) use ($cat, $fCountry, $fOfficer, $fLevel, $fDoc, $fq) {
+    $pi = $r['_p'];
+    if ($cat === 'all' ? !$pi['any'] : !$pi[$cat]) return false;
+    if ($fCountry !== '' && strcasecmp(trim((string)$r['country']) ?: 'Not set', $fCountry) !== 0) return false;
+    if ($fOfficer && (int)$r['officer_id'] !== $fOfficer && (int)$r['frontend_officer_id'] !== $fOfficer) return false;
+    if ($fLevel !== '' && strtoupper((string)$r['program_level']) !== $fLevel) return false;
+    if ($fDoc !== '' && !in_array($fDoc, $pi['docs_missing'], true)) return false;
+    if ($fq !== '' && !str_contains(strtolower($r['name'] . ' ' . $r['email'] . ' ' . implode(' ', $pi['docs_missing'])), strtolower($fq))) return false;
+    return true;
+}));
+usort($list, fn($a, $b) => [count($b['_p']['task_keys']), $b['_p']['docs_count']] <=> [count($a['_p']['task_keys']), $a['_p']['docs_count']]);
 
-page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label']);
+function pending_url(string $base, array $over = []): string {
+    $params = array_merge(['cat' => get('cat') ?: 'all', 'country' => get('country'), 'officer' => get('officer'), 'program_level' => get('program_level'), 'doc' => get('doc'), 'q' => get('q')], $over);
+    $params = array_filter($params, fn($v) => $v !== '' && $v !== null && $v !== 'all' && $v !== 0 && $v !== '0');
+    return url($base . '/pending.php' . ($params ? '?' . http_build_query($params) : ''));
+}
+$catTone = ['all' => 'acc', 'docs' => 'bad', 'consent' => 'warn', 'first_meeting' => 'acc', 'recording' => 'acc', 'second_tax' => 'hold', 'shortlisting' => 'warn', 'credentials' => 'acc', 'remarks' => 'bad'];
+$catHelp = [
+    'all'           => 'Active students with at least one open item',
+    'docs'          => 'At least one required document not yet received',
+    'consent'       => 'Signed consent form not marked as received',
+    'first_meeting' => 'Initial meeting with the student not held',
+    'recording'     => 'No recording link / video and no reason given (Italy)',
+    'second_tax'    => '2nd processing or tax consultant meeting open (Italy)',
+    'shortlisting'  => 'No shortlisted university yet',
+    'credentials'   => 'Student email or university portal ID missing',
+    'remarks'       => 'Profile was edited and no staff remark added since',
+];
+$flagMap = country_flags_map();
+
+page_start('Pending Tracker', $u, PORTALS[$u['role']]['label']);
 ?>
-
-<div class="panel-h" style="margin-bottom:1rem;">
-  <div>
-    <h1>⏳ Complete Pending Tracker (Kis Ka Kitna Pending Ha)</h1>
-    <p>Detailed breakdown of all pending documents, consents, meetings, university shortlisting, portal credentials, and remarks across every Officer, Country, Counselor, and Student.</p>
-  </div>
-  <div class="row-actions">
-    <a class="btn sm ghost" href="<?= h(url($base . '/index.php')) ?>">&larr; Back to Dashboard</a>
-    <a class="btn sm primary" href="<?= h(url($base . '/students.php')) ?>">Open All Students Table &rarr;</a>
-  </div>
-</div>
-
-<!-- 1. TOP PENDING CATEGORY CARDS (CLICK TO FILTER) -->
-<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(185px, 1fr)); gap:0.75rem; margin-bottom:1.35rem;">
-  <?php
-  $catCards = [
-      'all'          => ['label' => 'All Pending Cases',        'val' => $totals['any'],            'sub' => 'Out of ' . $totals['students'] . ' total students', 'color' => 'var(--accent)'],
-      'docs'         => ['label' => 'Pending Documents',        'val' => $totals['docs'],           'sub' => $totals['has_doc_note'] . ' with specific doc notes', 'color' => '#ef4444'],
-      'consent'      => ['label' => 'Pending Consent Form',     'val' => $totals['consent'],        'sub' => 'Consent not marked Yes', 'color' => '#f59e0b'],
-      'meetings'     => ['label' => 'Pending 1st / Recording',  'val' => $totals['meetings'],       'sub' => 'Initial meeting or video open', 'color' => '#3b82f6'],
-      'second_tax'   => ['label' => 'Pending 2nd / Tax Meet',   'val' => $totals['second_tax'],     'sub' => '2nd consultation or Tax open', 'color' => '#8b5cf6'],
-      'shortlisting' => ['label' => 'Pending Shortlisting/Apps','val' => $totals['shortlisting'],   'sub' => 'University shortlisting open', 'color' => '#ec4899'],
-      'credentials'  => ['label' => 'Pending Portal / Email',   'val' => $totals['credentials'],    'sub' => 'Email or Portal ID missing', 'color' => '#14b8a6'],
-      'remarks'      => ['label' => 'Pending Remarks / Action', 'val' => $totals['remarks'],        'sub' => $totals['pending_timer'] . ' active 48h timer', 'color' => '#f97316'],
-  ];
-  foreach ($catCards as $cKey => $card):
-      $isActive = ($catFilter === $cKey);
-  ?>
-    <a href="<?= h(pending_filter_url($base, ['cat' => $cKey]) . '#student-pending-list') ?>"
-       style="text-decoration:none; color:inherit; background:<?= $isActive ? 'var(--sunk)' : 'var(--surface)' ?>; border:<?= $isActive ? '2px solid ' . $card['color'] : '1.5px solid var(--border)' ?>; border-left:4px solid <?= $card['color'] ?>; border-radius:8px; padding:0.85rem 1rem; display:flex; flex-direction:column; gap:0.2rem;">
-      <div style="font-size:0.74rem; font-weight:700; text-transform:uppercase; color:var(--muted);"><?= h($card['label']) ?></div>
-      <div style="font-size:1.75rem; font-weight:700; color:<?= $card['color'] ?>; line-height:1.15;"><?= (int)$card['val'] ?></div>
-      <div class="small muted"><?= h($card['sub']) ?></div>
-    </a>
-  <?php endforeach; ?>
-</div>
-
-<?php if ($admin || $u['role'] === 'pms_lead'): ?>
-<!-- 2. OFFICER-WISE PENDING BREAKDOWN (KIS OFFICER KA KITNA PENDING HA) -->
-<section class="panel" style="margin-bottom:1.35rem;">
+<section class="panel">
   <div class="panel-h">
     <div>
-      <h2>👩‍💼 Pending Breakdown per Processing Officer (Front-End &amp; Back-End)</h2>
-      <p>Exact pending counts for each officer. Click any number in the table to list those exact pending students below.</p>
+      <div class="eyebrow">Pending Tracker</div>
+      <h1>What is pending, and with whom</h1>
+      <p>Each student is counted once per item. Documents are one item: a student is “documents pending” if any required document is missing — wherever the file is kept (Google Drive or uploaded here).</p>
     </div>
-    <?php if ($officerFilter > 0): ?>
-      <div class="row-actions">
-        <a class="btn sm ghost" href="<?= h(pending_filter_url($base, ['officer' => ''])) ?>">Clear Officer Filter ✕</a>
-      </div>
-    <?php endif; ?>
+    <div class="row-actions">
+      <a class="btn sm" href="<?= h(url($base . '/pending_report.php')) ?>">Officer pending reports →</a>
+    </div>
   </div>
-  <div class="tbl"><table>
-    <thead>
-      <tr>
-        <th>Processing Officer</th>
-        <th>Team &amp; Countries</th>
-        <th class="num">Assigned</th>
-        <th class="num" title="Students with any pending item">Total Pending</th>
-        <th class="num" title="Consent != Yes">Pending Consent</th>
-        <th class="num" title="Docs Checklist != Yes">Checklist Open</th>
-        <th class="num" title="Students with specific Pending Docs Note in sheet">Pending Docs Note</th>
-        <th class="num" title="Total missing core document files in Google Drive">Missing Drive Files</th>
-        <th class="num" title="Initial Meeting != Yes">Pending 1st Meet</th>
-        <th class="num" title="Recorded Video not uploaded">Pending Recording</th>
-        <th class="num" title="2nd Meeting or Tax Meeting open">Pending 2nd / Tax</th>
-        <th class="num" title="Shortlisting or University Applications pending">Pending Shortlist</th>
-        <th class="num" title="Missing Remarks or 48h Pending Timer">Pending Remarks</th>
-        <th>Filter</th>
-      </tr>
-    </thead>
+  <div class="pend-cards">
+    <?php foreach ($CATS as $ck => $cl): $val = $ck === 'all' ? $totals['any'] : $totals[$ck]; ?>
+      <a class="pend-card tone-<?= $catTone[$ck] ?> <?= $cat === $ck ? 'on' : '' ?>" href="<?= h(pending_url($base, ['cat' => $ck]) . '#list') ?>" title="<?= h($catHelp[$ck]) ?>">
+        <span class="pc-l"><?= h($cl) ?></span>
+        <span class="pc-v"><?= $val ?></span>
+        <span class="pc-s"><?= h($catHelp[$ck]) ?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+</section>
+
+<?php if ($isLead): ?>
+<section class="panel">
+  <div class="panel-h"><div><h2>Pending by processing officer</h2><p>Number of students with each open item. Click a number to see exactly those students.</p></div></div>
+  <div class="tbl"><table class="matrix">
+    <thead><tr><th>Officer</th><th class="num">Students</th><th class="num">With pending</th>
+      <?php foreach (PENDING_TASKS as $k => $l): ?><th class="num" title="<?= h($catHelp[$k]) ?>"><?= h($l) ?></th><?php endforeach; ?></tr></thead>
     <tbody>
-      <?php foreach ($byOfficer as $oid => $st):
-          if ($st['total'] === 0) continue;
-          $isSelectedOff = ($officerFilter === $oid);
-          $cList = implode(', ', array_keys($st['countries']));
-      ?>
-        <tr style="<?= $isSelectedOff ? 'background:rgba(59,130,246,0.08);' : '' ?>">
-          <td>
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'all']) . '#student-pending-list') ?>">
-              <b><?= h($st['name']) ?></b>
-            </a>
-          </td>
-          <td>
-            <span class="pill sm <?= $st['department'] === 'frontend' ? 'acc' : '' ?>"><?= $st['department'] === 'frontend' ? 'Front-End' : 'Back-End' ?></span>
-            <span class="small muted" style="margin-left:0.25rem;"><?= h($cList) ?></span>
-          </td>
-          <td class="num"><b><?= $st['total'] ?></b></td>
-          <td class="num">
-            <a class="pill sm <?= $st['any'] > 0 ? 'bad' : 'ok' ?>" href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'all']) . '#student-pending-list') ?>" style="text-decoration:none;">
-              <?= $st['any'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'consent']) . '#student-pending-list') ?>" style="color:<?= $st['consent'] > 0 ? 'var(--warn, #f59e0b)' : 'var(--muted)' ?>; font-weight:<?= $st['consent'] > 0 ? '700' : '400' ?>;">
-              <?= $st['consent'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'checklist_open']) . '#student-pending-list') ?>" style="color:<?= $st['checklist_open'] > 0 ? 'var(--bad, #ef4444)' : 'var(--muted)' ?>; font-weight:<?= $st['checklist_open'] > 0 ? '700' : '400' ?>;">
-              <?= $st['checklist_open'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'doc_note']) . '#student-pending-list') ?>" style="color:<?= $st['has_doc_note'] > 0 ? 'var(--bad, #ef4444)' : 'var(--muted)' ?>; font-weight:<?= $st['has_doc_note'] > 0 ? '700' : '400' ?>;">
-              <?= $st['has_doc_note'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'docs']) . '#student-pending-list') ?>" title="Total missing core documents across assigned students">
-              <span class="pill sm <?= $st['missing_files'] > 0 ? 'warn' : 'ok' ?>"><?= $st['missing_files'] ?> files</span>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'first_meeting']) . '#student-pending-list') ?>" style="font-weight:<?= $st['first_meeting'] > 0 ? '700' : '400' ?>;">
-              <?= $st['first_meeting'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'recording']) . '#student-pending-list') ?>" style="font-weight:<?= $st['recording'] > 0 ? '700' : '400' ?>;">
-              <?= $st['recording'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'second_tax']) . '#student-pending-list') ?>" style="font-weight:<?= $st['second_tax'] > 0 ? '700' : '400' ?>;">
-              <?= $st['second_tax'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'shortlisting']) . '#student-pending-list') ?>" style="font-weight:<?= $st['shortlisting'] > 0 ? '700' : '400' ?>;">
-              <?= $st['shortlisting'] ?>
-            </a>
-          </td>
-          <td class="num">
-            <a href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'remarks']) . '#student-pending-list') ?>" style="color:<?= $st['remarks'] > 0 ? 'var(--bad, #ef4444)' : 'var(--muted)' ?>; font-weight:<?= $st['remarks'] > 0 ? '700' : '400' ?>;">
-              <?= $st['remarks'] ?>
-            </a>
-          </td>
-          <td>
-            <a class="btn sm <?= $isSelectedOff ? 'primary' : '' ?>" href="<?= h(pending_filter_url($base, ['officer' => $oid, 'cat' => 'all']) . '#student-pending-list') ?>">
-              View Pending &rarr;
-            </a>
-          </td>
+      <?php foreach ($byOfficer as $oid => $o): if (!$o['c']['students']) continue; ?>
+        <tr class="<?= $fOfficer === $oid ? 'is-sel' : '' ?>">
+          <td><a href="<?= h(pending_url($base, ['officer' => $oid, 'cat' => 'all']) . '#list') ?>"><b><?= h($o['name']) ?></b></a>
+            <span class="<?= $o['department'] === 'frontend' ? 'tag-fe' : 'tag-be' ?>"><?= $o['department'] === 'frontend' ? 'FE' : 'BE' ?></span>
+            <div class="small muted"><?= implode(' ', array_map(fn($c) => $flagMap[$c] ?? '', array_keys($o['countries']))) ?> <?= h(implode(', ', array_keys($o['countries']))) ?></div></td>
+          <td class="num"><?= $o['c']['students'] ?></td>
+          <td class="num"><a class="cnt <?= $o['c']['any'] ? 'warn' : 'zero' ?>" href="<?= h(pending_url($base, ['officer' => $oid, 'cat' => 'all']) . '#list') ?>"><?= $o['c']['any'] ?></a></td>
+          <?php foreach (PENDING_TASKS as $k => $_): $v = $o['c'][$k]; ?>
+            <td class="num"><a class="cnt <?= $v ? ($k === 'docs' || $k === 'remarks' ? 'bad' : 'warn') : 'zero' ?>" href="<?= h(pending_url($base, ['officer' => $oid, 'cat' => $k]) . '#list') ?>"><?= $v ?></a></td>
+          <?php endforeach; ?>
         </tr>
       <?php endforeach; ?>
+      <tr class="total"><td>All students (each counted once)</td><td class="num"><?= $totals['students'] ?></td><td class="num"><?= $totals['any'] ?></td>
+        <?php foreach (PENDING_TASKS as $k => $_): ?><td class="num"><?= $totals[$k] ?></td><?php endforeach; ?></tr>
     </tbody>
   </table></div>
 </section>
 <?php endif; ?>
 
-<!-- 3. COUNTRY-WISE & COUNSELOR-WISE PENDING BREAKDOWN -->
-<div class="grid2" style="margin-bottom:1.35rem;">
-  <!-- Country Breakdown -->
+<div class="grid2">
   <section class="panel">
-    <div class="panel-h">
-      <div>
-        <h2>🌍 Pending by Country</h2>
-        <p>Click any country or number to filter the detailed pending list</p>
-      </div>
-      <?php if ($countryFilter !== ''): ?>
-        <a class="btn sm ghost" href="<?= h(pending_filter_url($base, ['country' => ''])) ?>">All Countries ✕</a>
-      <?php endif; ?>
-    </div>
+    <div class="panel-h"><div><h2>Pending by country</h2><p>Students with each open item.</p></div></div>
     <div class="tbl"><table>
-      <thead>
-        <tr>
-          <th>Country</th>
-          <th class="num">Total</th>
-          <th class="num">Pending Docs</th>
-          <th class="num">Consent</th>
-          <th class="num">Meetings</th>
-          <th class="num">Shortlist</th>
-          <th class="num">Portal ID</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Country</th><th class="num">Students</th><th class="num">Documents</th><th class="num">Consent</th><th class="num">Meetings</th><th class="num">Shortlist</th><th class="num">Email / portal</th></tr></thead>
       <tbody>
-        <?php foreach ($byCountry as $cName => $cst):
-            $flag = $flagMap[$cName] ?? '📍';
-            $isSelC = (strcasecmp($countryFilter, $cName) === 0);
-        ?>
-          <tr style="<?= $isSelC ? 'background:rgba(59,130,246,0.08);' : '' ?>">
-            <td>
-              <a href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'all']) . '#student-pending-list') ?>">
-                <b><?= $flag ?> <?= h($cName) ?></b>
-              </a>
-            </td>
-            <td class="num"><b><?= $cst['total'] ?></b></td>
-            <td class="num">
-              <a class="pill sm <?= $cst['docs'] > 0 ? 'bad' : 'ok' ?>" href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'docs']) . '#student-pending-list') ?>" style="text-decoration:none;">
-                <?= $cst['docs'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'consent']) . '#student-pending-list') ?>">
-                <?= $cst['consent'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'meetings']) . '#student-pending-list') ?>">
-                <?= $cst['meetings'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'shortlisting']) . '#student-pending-list') ?>">
-                <?= $cst['shortlisting'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['country' => $cName, 'cat' => 'credentials']) . '#student-pending-list') ?>">
-                <?= $cst['credentials'] ?>
-              </a>
-            </td>
+        <?php foreach ($byCountry as $cn => $c): ?>
+          <tr class="<?= strcasecmp($fCountry, $cn) === 0 ? 'is-sel' : '' ?>">
+            <td><a href="<?= h(pending_url($base, ['country' => $cn]) . '#list') ?>"><?= $flagMap[$cn] ?? '' ?> <b><?= h($cn) ?></b></a></td>
+            <td class="num"><?= $c['students'] ?></td>
+            <td class="num"><a class="cnt <?= $c['docs'] ? 'bad' : 'zero' ?>" href="<?= h(pending_url($base, ['country' => $cn, 'cat' => 'docs']) . '#list') ?>"><?= $c['docs'] ?></a></td>
+            <td class="num"><a class="cnt <?= $c['consent'] ? 'warn' : 'zero' ?>" href="<?= h(pending_url($base, ['country' => $cn, 'cat' => 'consent']) . '#list') ?>"><?= $c['consent'] ?></a></td>
+            <td class="num"><a class="cnt <?= $c['first_meeting'] ? 'warn' : 'zero' ?>" href="<?= h(pending_url($base, ['country' => $cn, 'cat' => 'first_meeting']) . '#list') ?>"><?= $c['first_meeting'] ?></a></td>
+            <td class="num"><a class="cnt <?= $c['shortlisting'] ? 'warn' : 'zero' ?>" href="<?= h(pending_url($base, ['country' => $cn, 'cat' => 'shortlisting']) . '#list') ?>"><?= $c['shortlisting'] ?></a></td>
+            <td class="num"><a class="cnt <?= $c['credentials'] ? 'warn' : 'zero' ?>" href="<?= h(pending_url($base, ['country' => $cn, 'cat' => 'credentials']) . '#list') ?>"><?= $c['credentials'] ?></a></td>
           </tr>
         <?php endforeach; ?>
       </tbody>
     </table></div>
   </section>
-
-  <!-- Counselor Breakdown -->
   <section class="panel">
-    <div class="panel-h">
-      <div>
-        <h2>🧑‍💼 Pending by Counselor</h2>
-        <p>Whose students have pending consents, documents, or meetings</p>
-      </div>
-      <?php if ($counselorFilter !== ''): ?>
-        <a class="btn sm ghost" href="<?= h(pending_filter_url($base, ['counselor' => ''])) ?>">All Counselors ✕</a>
-      <?php endif; ?>
-    </div>
-    <div class="tbl" style="max-height:340px; overflow-y:auto;"><table>
-      <thead>
-        <tr>
-          <th>Counselor</th>
-          <th class="num">Students</th>
-          <th class="num">Pending Consent</th>
-          <th class="num">Pending Docs</th>
-          <th class="num">Doc Notes</th>
-          <th class="num">Pending Meet</th>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($byCounselor as $counName => $cnSt):
-            $isSelCn = (strcasecmp($counselorFilter, $counName) === 0);
-        ?>
-          <tr style="<?= $isSelCn ? 'background:rgba(59,130,246,0.08);' : '' ?>">
-            <td>
-              <a href="<?= h(pending_filter_url($base, ['counselor' => $counName, 'cat' => 'all']) . '#student-pending-list') ?>">
-                <b><?= h($counName) ?></b>
-              </a>
-              <div class="small muted"><?= h(implode(', ', array_keys($cnSt['countries']))) ?></div>
-            </td>
-            <td class="num"><b><?= $cnSt['total'] ?></b></td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['counselor' => $counName, 'cat' => 'consent']) . '#student-pending-list') ?>" style="color:<?= $cnSt['consent'] > 0 ? 'var(--warn, #f59e0b)' : 'var(--muted)' ?>; font-weight:<?= $cnSt['consent'] > 0 ? '700' : '400' ?>;">
-                <?= $cnSt['consent'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['counselor' => $counName, 'cat' => 'docs']) . '#student-pending-list') ?>" style="color:<?= $cnSt['docs'] > 0 ? 'var(--bad, #ef4444)' : 'var(--muted)' ?>; font-weight:<?= $cnSt['docs'] > 0 ? '700' : '400' ?>;">
-                <?= $cnSt['docs'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['counselor' => $counName, 'cat' => 'doc_note']) . '#student-pending-list') ?>">
-                <?= $cnSt['has_doc_note'] ?>
-              </a>
-            </td>
-            <td class="num">
-              <a href="<?= h(pending_filter_url($base, ['counselor' => $counName, 'cat' => 'meetings']) . '#student-pending-list') ?>">
-                <?= $cnSt['meetings'] ?>
-              </a>
-            </td>
-          </tr>
+    <div class="panel-h"><div><h2>Most-missing documents</h2><p>How many students still have to send each document. Click to see who.</p></div></div>
+    <?php if (!$docFreq): ?><div class="empty">No documents pending.</div><?php else: $mx = max($docFreq); ?>
+      <div class="bars">
+        <?php foreach (array_slice($docFreq, 0, 12, true) as $dn => $dc): ?>
+          <a class="bar <?= $fDoc === $dn ? 'is-sel' : '' ?>" href="<?= h(pending_url($base, ['cat' => 'docs', 'doc' => $dn]) . '#list') ?>"><span><?= h($dn) ?></span><span class="t"><i style="width:<?= round($dc / $mx * 100, 1) ?>%"></i></span><span class="n num"><?= $dc ?></span></a>
         <?php endforeach; ?>
-      </tbody>
-    </table></div>
+      </div>
+    <?php endif; ?>
   </section>
 </div>
 
-<!-- 4. DETAILED STUDENT-BY-STUDENT PENDING LIST -->
-<section class="panel" id="student-pending-list">
-  <div class="panel-h" style="flex-wrap:wrap; gap:0.75rem;">
-    <div>
-      <h2>📋 Detailed Student-by-Student Pending List (Showing <?= count($filteredStudents) ?> students)</h2>
-      <p>Exact missing documents, sheet pending notes, and open workflow stages for every matching student</p>
-    </div>
-    <form method="get" action="<?= h(url($base . '/pending.php')) ?>#student-pending-list" style="display:flex; gap:0.45rem; flex-wrap:wrap; align-items:center;">
-      <select name="cat" onchange="this.form.submit();" style="font-size:0.82rem; padding:0.35rem 0.55rem;">
-        <option value="all" <?= $catFilter === 'all' ? 'selected' : '' ?>>All Pending Categories (<?= $totals['any'] ?>)</option>
-        <option value="docs" <?= $catFilter === 'docs' ? 'selected' : '' ?>>Pending Documents (<?= $totals['docs'] ?>)</option>
-        <option value="doc_note" <?= $catFilter === 'doc_note' ? 'selected' : '' ?>>Has Pending Docs Note (<?= $totals['has_doc_note'] ?>)</option>
-        <option value="checklist_open" <?= $catFilter === 'checklist_open' ? 'selected' : '' ?>>Docs Checklist Not Done (<?= $totals['checklist_open'] ?>)</option>
-        <option value="consent" <?= $catFilter === 'consent' ? 'selected' : '' ?>>Pending Consent Form (<?= $totals['consent'] ?>)</option>
-        <option value="meetings" <?= $catFilter === 'meetings' ? 'selected' : '' ?>>Pending 1st Meeting / Recording (<?= $totals['meetings'] ?>)</option>
-        <option value="second_tax" <?= $catFilter === 'second_tax' ? 'selected' : '' ?>>Pending 2nd / Tax Meeting (<?= $totals['second_tax'] ?>)</option>
-        <option value="shortlisting" <?= $catFilter === 'shortlisting' ? 'selected' : '' ?>>Pending Shortlisting / Apps (<?= $totals['shortlisting'] ?>)</option>
-        <option value="credentials" <?= $catFilter === 'credentials' ? 'selected' : '' ?>>Pending Portal / Email ID (<?= $totals['credentials'] ?>)</option>
-        <option value="remarks" <?= $catFilter === 'remarks' ? 'selected' : '' ?>>Pending Remarks / 48h Action (<?= $totals['remarks'] ?>)</option>
-      </select>
-
-      <select name="country" onchange="this.form.submit();" style="font-size:0.82rem; padding:0.35rem 0.55rem;">
-        <option value="">All Countries</option>
-        <?php foreach (array_keys($byCountry) as $cOpt): ?>
-          <option value="<?= h($cOpt) ?>" <?= strcasecmp($countryFilter, $cOpt) === 0 ? 'selected' : '' ?>><?= h($cOpt) ?></option>
-        <?php endforeach; ?>
-      </select>
-
-      <?php if ($admin || $u['role'] === 'pms_lead'): ?>
-      <select name="officer" onchange="this.form.submit();" style="font-size:0.82rem; padding:0.35rem 0.55rem;">
-        <option value="">All Processing Officers</option>
-        <?php foreach ($byOfficer as $oid => $oOpt): if ($oOpt['total'] === 0) continue; ?>
-          <option value="<?= $oid ?>" <?= $officerFilter === $oid ? 'selected' : '' ?>><?= h($oOpt['name']) ?> (<?= $oOpt['department'] === 'frontend' ? 'FE' : 'BE' ?>)</option>
-        <?php endforeach; ?>
-      </select>
-      <?php endif; ?>
-
-      <select name="counselor" onchange="this.form.submit();" style="font-size:0.82rem; padding:0.35rem 0.55rem;">
-        <option value="">All Counselors</option>
-        <?php foreach (array_keys($byCounselor) as $cnOpt): ?>
-          <option value="<?= h($cnOpt) ?>" <?= strcasecmp($counselorFilter, $cnOpt) === 0 ? 'selected' : '' ?>><?= h($cnOpt) ?></option>
-        <?php endforeach; ?>
-      </select>
-
-      <select name="program_level" onchange="this.form.submit();" style="font-size:0.82rem; padding:0.35rem 0.55rem;">
-        <option value="">BS &amp; MS</option>
-        <option value="BS" <?= $levelFilter === 'BS' ? 'selected' : '' ?>>BS Only</option>
-        <option value="MS" <?= $levelFilter === 'MS' ? 'selected' : '' ?>>MS Only</option>
-      </select>
-
-      <input type="text" name="q" value="<?= h($qFilter) ?>" placeholder="Search student or pending doc..." style="font-size:0.82rem; padding:0.35rem 0.6rem; width:190px;">
-      <button type="submit" class="btn sm primary">Filter</button>
-      <?php if ($catFilter !== 'all' || $countryFilter !== '' || $officerFilter > 0 || $counselorFilter !== '' || $levelFilter !== '' || $qFilter !== ''): ?>
-        <a class="btn sm ghost" href="<?= h(url($base . '/pending.php')) ?>">Reset All</a>
-      <?php endif; ?>
-    </form>
+<section class="panel" id="list">
+  <div class="panel-h">
+    <div><h2><?= h($CATS[$cat]) ?> — <?= count($list) ?> student<?= count($list) === 1 ? '' : 's' ?></h2><p>Most open items first. Click a document to open the student's Documents section.</p></div>
   </div>
+  <form method="get" class="toolbar" action="<?= h(url($base . '/pending.php')) ?>#list">
+    <select name="cat" data-autosubmit aria-label="Pending item">
+      <?php foreach ($CATS as $ck => $cl): ?><option value="<?= h($ck) ?>" <?= $cat === $ck ? 'selected' : '' ?>><?= h($cl) ?> (<?= $ck === 'all' ? $totals['any'] : $totals[$ck] ?>)</option><?php endforeach; ?>
+    </select>
+    <select name="country" data-autosubmit aria-label="Country"><option value="">All countries</option><?php foreach (array_keys($byCountry) as $cn): ?><option <?= strcasecmp($fCountry, $cn) === 0 ? 'selected' : '' ?>><?= h($cn) ?></option><?php endforeach; ?></select>
+    <?php if ($isLead): ?>
+      <select name="officer" data-autosubmit aria-label="Processing officer"><option value="">All processing officers</option>
+        <?php foreach ($byOfficer as $oid => $o): if (!$o['c']['students']) continue; ?><option value="<?= $oid ?>" <?= $fOfficer === $oid ? 'selected' : '' ?>><?= h($o['name']) ?> (<?= $o['department'] === 'frontend' ? 'FE' : 'BE' ?>)</option><?php endforeach; ?>
+      </select>
+    <?php endif; ?>
+    <select name="doc" data-autosubmit aria-label="Missing document"><option value="">Any document</option><?php foreach (array_keys($docFreq) as $dn): ?><option <?= $fDoc === $dn ? 'selected' : '' ?>><?= h($dn) ?></option><?php endforeach; ?></select>
+    <select name="program_level" data-autosubmit aria-label="Level"><option value="">BS &amp; MS</option><option <?= $fLevel === 'BS' ? 'selected' : '' ?>>BS</option><option <?= $fLevel === 'MS' ? 'selected' : '' ?>>MS</option></select>
+    <input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search student…">
+    <button class="btn sm" type="submit">Filter</button>
+    <?php if ($cat !== 'all' || $fCountry || $fOfficer || $fLevel || $fDoc || $fq): ?><a class="btn sm ghost" href="<?= h(url($base . '/pending.php')) ?>#list">Reset</a><?php endif; ?>
+  </form>
 
-  <?php if (empty($filteredStudents)): ?>
-    <div class="empty">No students match the selected pending filter criteria.</div>
+  <?php if (!$list): ?>
+    <div class="empty">Nothing pending for this filter.</div>
   <?php else: ?>
-    <div class="tbl tbl-pending"><table>
-      <colgroup><col style="width:52px"><col style="width:180px"><col style="width:160px"><col style="width:200px"><col style="width:280px"><col style="width:220px"><col style="width:118px"></colgroup>
-      <thead>
+  <div class="tbl tbl-pending"><table>
+    <colgroup><col style="width:52px"><col style="width:190px"><col style="width:150px"><col style="width:220px"><col style="width:300px"><col style="width:220px"><col style="width:96px"></colgroup>
+    <thead><tr><th>SR#</th><th>Student</th><th>Processing officers</th><th>Open items</th><th>Documents pending</th><th>Last remark</th><th></th></tr></thead>
+    <tbody>
+      <?php foreach ($list as $r): $pi = $r['_p']; $cn = trim((string)$r['country']); $prof = url($base . '/student.php?id=' . (int)$r['id']); ?>
         <tr>
-          <th style="width:50px;">SR#</th>
-          <th>Student &amp; Country</th>
-          <th>Processing Officers</th>
-          <th>What Stages Are Pending?</th>
-          <th>What Documents Are Pending? (Sheet Note &amp; Drive Files)</th>
-          <th>Last Remarks (Click Dots)</th>
-          <th style="text-align:right;">Actions</th>
+          <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
+          <td><a href="<?= h($prof) ?>"><b><?= h($r['name']) ?></b></a>
+            <div class="order-tags" style="margin-top:4px;"><span class="pill sm"><?= $flagMap[$cn] ?? '' ?> <?= h($cn ?: '—') ?></span><?php if ($r['program_level']): ?><span class="pill sm acc"><?= h($r['program_level']) ?></span><?php endif; ?></div></td>
+          <td class="small">
+            <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: 'Not set') ?></b></div>
+            <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?: 'Not set') ?></b></div>
+          </td>
+          <td>
+            <div class="chip-row">
+              <?php foreach ($pi['task_keys'] as $k): if ($k === 'docs') continue; ?>
+                <span class="pill sm <?= $k === 'remarks' ? 'bad' : 'warn' ?>" title="<?= h($catHelp[$k]) ?>"><?= h(PENDING_TASKS[$k]) ?><?= $k === 'remarks' && $pi['remark_hours'] !== null ? ' · ' . $pi['remark_hours'] . 'h' : '' ?></span>
+              <?php endforeach; ?>
+              <?php if (!array_diff($pi['task_keys'], ['docs'])): ?><span class="pill sm ok">Only documents</span><?php endif; ?>
+            </div>
+            <?php if ($pi['recording_state']['state'] === 'not_recorded' && strtolower($cn) === 'italy'): ?><div class="small muted" style="margin-top:4px;">No recording: <?= h(mb_strimwidth($pi['recording_state']['reason'], 0, 60, '…')) ?></div><?php endif; ?>
+          </td>
+          <td>
+            <?php if ($pi['docs']): ?>
+              <div class="small muted" style="margin-bottom:4px;"><b class="bad-t"><?= $pi['docs_count'] ?> pending</b> · <?= $pi['docs_in_hand'] ?> of <?= $pi['docs_required'] ?> required in hand</div>
+              <div class="chip-row"><?php foreach ($pi['docs_missing'] as $d): ?><a class="doc-chip" href="<?= h($prof . '#documents') ?>"><?= h($d) ?></a><?php endforeach; ?></div>
+            <?php else: ?>
+              <span class="pill sm ok">✓ All documents received</span>
+            <?php endif; ?>
+          </td>
+          <td class="small"><?= last_remarks_cell($r) ?></td>
+          <td><div class="pend-actions"><a class="btn sm primary" href="<?= h($prof) ?>">Open</a><?php if ($dl = safe_link($r['drive_link'] ?? null)): ?><a class="btn sm" href="<?= h($dl) ?>" target="_blank" rel="noopener noreferrer">Drive</a><?php endif; ?></div></td>
         </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($filteredStudents as $r):
-            $p = $r['_pending'];
-            $cName = trim((string)($r['country'] ?? 'Italy')) ?: 'Italy';
-            $flag = $flagMap[$cName] ?? '📍';
-            $dLink = safe_link($r['drive_link'] ?? null);
-        ?>
-          <tr>
-            <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
-            <td>
-              <a href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>"><b><?= h($r['name']) ?></b></a>
-              <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-top:0.25rem;">
-                <span class="pill sm"><?= $flag ?> <?= h($cName) ?></span>
-                <?php if (!empty($r['program_level'])): ?>
-                  <span class="pill sm acc"><?= h($r['program_level']) ?></span>
-                <?php endif; ?>
-                <?php if (($r['student_status'] ?? 'active') !== 'active'): ?>
-                  <span class="pill sm bad"><?= h(ucfirst((string)$r['student_status'])) ?></span>
-                <?php endif; ?>
-              </div>
-            </td>
-            <td class="small">
-              <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: 'Not set') ?></b></div>
-              <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?? 'Unassigned') ?></b></div>
-              <?php if (!empty($r['counselor'])): ?><div class="muted" style="font-size:11.5px; margin-top:2px;">Counselor: <?= h($r['counselor']) ?></div><?php endif; ?>
-            </td>
-            <td>
-              <div style="display:flex; gap:0.25rem; flex-wrap:wrap;">
-                <?php foreach ($p['items'] as $itemLabel):
-                    $pillClass = (str_contains($itemLabel, 'Docs') || str_contains($itemLabel, '48h')) ? 'bad' : 'warn';
-                ?>
-                  <span class="pill sm <?= $pillClass ?>"><?= h($itemLabel) ?></span>
-                <?php endforeach; ?>
-                <?php if (empty($p['items'])): ?>
-                  <span class="pill sm ok">Stages Done</span>
-                <?php endif; ?>
-              </div>
-            </td>
-            <td>
-              <?php if ($p['has_doc_note']): ?>
-                <div class="pend-note" title="<?= h($p['doc_note']) ?>">
-                  <b>Sheet Pending Note:</b> <span class="pend-note-text"><?= h($p['doc_note']) ?></span>
-                </div>
-              <?php endif; ?>
-              <div class="small">
-                <span class="pill sm <?= $p['received_docs'] >= 5 ? 'ok' : ($p['received_docs'] > 0 ? 'warn' : 'bad') ?>">
-                  📁 <?= $p['received_docs'] ?> Received
-                </span>
-                <?php if (!empty($p['missing_core'])): ?>
-                  <span class="muted" style="display:block; margin-top:0.2rem;">
-                    <b>Missing in Drive:</b> <?= h(implode(', ', $p['missing_core'])) ?>
-                  </span>
-                <?php else: ?>
-                  <span class="muted" style="margin-left:0.25rem;">All core files in Drive ✓</span>
-                <?php endif; ?>
-              </div>
-            </td>
-            <td class="small">
-              <?= last_remarks_cell($r) ?>
-            </td>
-            <td style="text-align:right;">
-              <div class="pend-actions">
-                <?php if ($dLink): ?>
-                  <a class="btn sm" href="<?= h($dLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Google Drive Folder">📁 Drive</a>
-                <?php endif; ?>
-                <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
-                <a class="btn sm primary" href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>">Open &amp; Fix &rarr;</a>
-              </div>
-            </td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table></div>
+      <?php endforeach; ?>
+    </tbody>
+  </table></div>
   <?php endif; ?>
 </section>
-
-<?php page_end(); ?>
+<?php page_end();

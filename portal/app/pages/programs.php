@@ -100,7 +100,7 @@ page_start('University Programs & Applications', $u, PORTALS[$u['role']]['label'
         All Countries <span class="pill sm" style="margin-left:0.3rem;"><?= $totalApps ?></span>
       </a>
       <?php
-        $flagMap = ['France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'Italy' => '🇮🇹'];
+        $flagMap = country_flags_map();
         foreach ($appCountries as $ac):
             $flag = $flagMap[$ac['country']] ?? '📍';
       ?>
@@ -190,7 +190,7 @@ page_start('University Programs & Applications', $u, PORTALS[$u['role']]['label'
         All Countries <span class="pill sm" style="margin-left:0.3rem;"><?= $totalCatalog ?></span>
       </a>
       <?php
-        $flagMap = ['Czech Republic' => '🇨🇿', 'Germany' => '🇩🇪', 'France' => '🇫🇷', 'Italy' => '🇮🇹', 'Austria' => '🇦🇹'];
+        $flagMap = country_flags_map();
         foreach ($catalogCountries as $cc):
             $flag = $flagMap[$cc['country']] ?? '📍';
       ?>

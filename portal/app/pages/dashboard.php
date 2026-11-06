@@ -15,28 +15,25 @@ $base = $admin ? 'admin' : 'officer';
 $n = count($rows);
 $month = date('Y-m');
 $thisMonth = count(array_filter($rows, fn($r) => str_starts_with((string)$r['created_at'], $month)));
-$onb = count(array_filter($rows, fn($r) => $r['consent'] !== 'Yes' || $r['docs_checklist'] !== 'Yes' || $r['initial_meeting'] !== 'Yes'));
+// One pending rule for the whole portal (same as the Pending Tracker)
+$dashDocState = load_doc_state(array_map(fn($r) => (int)$r['id'], $rows));
+$dashApps = [];
+foreach (q('SELECT student_id, COUNT(*) c FROM student_applications GROUP BY student_id') as $ar) $dashApps[(int)$ar['student_id']] = (int)$ar['c'];
+foreach ($rows as $i => $r) {
+    $rows[$i]['_p'] = student_pending($r, $dashDocState[(int)$r['id']] ?? [], $dashApps[(int)$r['id']] ?? 0);
+    $rows[$i]['_doc_info'] = ['complete' => !$rows[$i]['_p']['docs'], 'in_hand' => $rows[$i]['_p']['docs_in_hand']];
+}
+$activeRows = array_filter($rows, fn($r) => ($r['student_status'] ?? 'active') === 'active');
 $offers = count(array_filter($rows, fn($r) => $r['offer'] === 'Yes'));
 $granted = count(array_filter($rows, fn($r) => $r['visa'] === 'Granted'));
 $refused = count(array_filter($rows, fn($r) => $r['visa'] === 'Refused'));
 $due = due_list($rows);
 $dueNow = count(array_filter($due, fn($d) => $d['date'] <= today()));
-
-$isDocNoteOpen = function (array $r): bool {
-    $note = strtolower(trim((string)($r['pending_docs_note'] ?? '')));
-    return $note !== '' && !in_array($note, ['n/a', 'none', 'nil', 'complete', 'completed', 'all complete', 'done', '-'], true);
-};
-$isStudentPendingAny = function (array $r) use ($isDocNoteOpen): bool {
-    return ($r['consent'] ?? '') !== 'Yes'
-        || ($r['docs_checklist'] ?? '') !== 'Yes'
-        || $isDocNoteOpen($r)
-        || ($r['initial_meeting'] ?? '') !== 'Yes'
-        || !empty($r['pending_since']);
-};
-$pendingTotalCases = count(array_filter($rows, $isStudentPendingAny));
-$pendingDocsCases  = count(array_filter($rows, fn($r) => ($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)));
-$pendingConsents   = count(array_filter($rows, fn($r) => ($r['consent'] ?? '') !== 'Yes'));
-$pendingMeetings   = count(array_filter($rows, fn($r) => ($r['initial_meeting'] ?? '') !== 'Yes'));
+$onb = count(array_filter($activeRows, fn($r) => $r['_p']['consent'] || $r['_p']['docs'] || $r['_p']['first_meeting']));
+$pendingTotalCases = count(array_filter($activeRows, fn($r) => $r['_p']['any']));
+$pendingDocsCases  = count(array_filter($activeRows, fn($r) => $r['_p']['docs']));
+$pendingConsents   = count(array_filter($activeRows, fn($r) => $r['_p']['consent']));
+$pendingMeetings   = count(array_filter($activeRows, fn($r) => $r['_p']['first_meeting']));
 
 if ($u['role'] === 'counselor') {
     // Dedicated Counselor Workspace Landing Page
@@ -255,12 +252,12 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <h1><?= $admin ? 'Global Operations & Team Overview' : 'Welcome, ' . h($u['name']) ?></h1>
     <p>Empowering ambitious students to unlock global education opportunities through trusted guidance and scholarship expertise.</p>
     <div class="values-strip">
-      <span class="value-chip">🇮🇹 Italy</span>
-      <span class="value-chip">🇫🇷 France</span>
-      <span class="value-chip">🇩🇪 Germany</span>
-      <span class="value-chip">🇨🇿 Czech Republic</span>
-      <span class="value-chip">🇨🇳 China</span>
-      <span class="value-chip">🇦🇹 Austria</span>
+      <span class="value-chip"><?= country_flag('Italy') ?> Italy</span>
+      <span class="value-chip"><?= country_flag('France') ?> France</span>
+      <span class="value-chip"><?= country_flag('Germany') ?> Germany</span>
+      <span class="value-chip"><?= country_flag('Czech Republic') ?> Czech Republic</span>
+      <span class="value-chip"><?= country_flag('China') ?> China</span>
+      <span class="value-chip"><?= country_flag('Austria') ?> Austria</span>
     </div>
   </div>
   <div class="row-actions">
@@ -272,15 +269,15 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 
 <div class="kpis">
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php')) ?>"><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><?= $thisMonth ?> added this month · Click to view</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Consent, checklist or first meeting open</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Docs: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · Meet: <?= $pendingMeetings ?> &rarr;</div></a>
+  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or first meeting still open</div></a>
+  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Documents: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · 1st meeting: <?= $pendingMeetings ?> &rarr;</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> non-Italy offers</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="#followups-panel"><div class="l">Follow-ups due</div><div class="v <?= $dueNow ? 'bad-t' : '' ?>"><?= $dueNow ?></div><div class="s">Today or overdue</div></a>
 </div>
 
 <?php
   $countryStats = [];
-  $flagMap = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+  $flagMap = country_flags_map();
   foreach ($rows as $r) {
       $cName = trim((string)($r['country'] ?? '')) ?: 'Other';
       if (!isset($countryStats[$cName])) {
@@ -289,7 +286,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
       $countryStats[$cName]['total']++;
       if (($r['program_level'] ?? '') === 'BS') $countryStats[$cName]['bs']++;
       if (($r['program_level'] ?? '') === 'MS') $countryStats[$cName]['ms']++;
-      if (($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)) $countryStats[$cName]['pending_docs']++;
+      if (($r['student_status'] ?? 'active') === 'active' && $r['_p']['docs']) $countryStats[$cName]['pending_docs']++;
       if (($r['offer'] ?? '') === 'Yes') $countryStats[$cName]['offers']++;
   }
   uasort($countryStats, fn($a, $b) => $b['total'] <=> $a['total']);
@@ -326,8 +323,8 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
           <?php if ($st['offers'] > 0): ?> &middot; Offers: <b><?= $st['offers'] ?></b><?php endif; ?>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.1rem;">
-          <a href="<?= h(url($base . '/pending.php?country=' . rawurlencode($cName))) ?>" class="small" style="color:var(--warn, #f59e0b); font-weight:600; text-decoration:underline;">
-            ⏳ <?= $st['pending_docs'] ?> Pending Docs &rarr;
+          <a href="<?= h(url($base . '/pending.php?cat=docs&country=' . rawurlencode($cName))) ?>" class="small" style="color:var(--warn, #f59e0b); font-weight:600; text-decoration:underline;">
+            ⏳ <?= $st['pending_docs'] ?> students · documents pending &rarr;
           </a>
           <?php if ($appsCnt > 0): ?>
             <span class="small" style="color:var(--accent); font-weight:600;">🏛 <?= $appsCnt ?> Apps</span>
@@ -353,56 +350,67 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
       </div>
     </div>
     <div class="tbl"><table>
-      <thead><tr><th>Officer &amp; Team</th><th>Students</th><th>Pending Docs</th><th>Pending Stages</th><th>Follow-ups due</th><th>Workspace</th></tr></thead>
+      <thead><tr><th>Officer &amp; Team</th><th class="num">Students</th><th class="num" title="Students with at least one required document missing">Documents</th><th class="num" title="Consent form not received">Consent</th><th class="num" title="1st meeting not held">1st meeting</th><th class="num" title="No shortlisted university yet">Shortlisting</th><th class="num">Follow-ups</th><th></th></tr></thead>
       <tbody>
       <?php foreach ($officers as $o):
-          $mine = array_filter($rows, fn($r) => (int)$r['officer_id'] === (int)$o['id'] || (int)($r['frontend_officer_id'] ?? 0) === (int)$o['id']);
-          $minePendingDocs = count(array_filter($mine, fn($r) => ($r['docs_checklist'] ?? '') !== 'Yes' || $isDocNoteOpen($r)));
-          $minePendingAny  = count(array_filter($mine, $isStudentPendingAny));
-          $d = count(array_filter(due_list($mine), fn($x) => $x['date'] <= today())); ?>
+          $mine = array_filter($activeRows, fn($r) => (int)$r['officer_id'] === (int)$o['id'] || (int)($r['frontend_officer_id'] ?? 0) === (int)$o['id']);
+          if (!$mine && !$o['active']) continue;
+          $cnt = fn(string $k) => count(array_filter($mine, fn($r) => $r['_p'][$k]));
+          $d = count(array_filter(due_list($mine), fn($x) => $x['date'] <= today()));
+          $cell = function (string $k, string $tone) use ($cnt, $o) {
+              $v = $cnt($k);
+              return '<a class="cnt ' . ($v ? $tone : 'zero') . '" href="' . h(url('admin/pending.php?officer=' . $o['id'] . '&cat=' . $k . '#list')) . '">' . $v . '</a>';
+          }; ?>
         <tr>
           <td>
             <a href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>"><b><?= h($o['name']) ?></b></a>
-            <span class="pill <?= $o['department'] === 'frontend' ? 'acc' : '' ?>" style="font-size:0.7rem; margin-left:0.25rem;"><?= $o['department'] === 'frontend' ? 'Front End' : 'Back End' ?></span>
+            <span class="<?= $o['department'] === 'frontend' ? 'tag-fe' : 'tag-be' ?>"><?= $o['department'] === 'frontend' ? 'FE' : 'BE' ?></span>
             <?= $o['active'] ? '' : ' <span class="pill">Inactive</span>' ?>
           </td>
           <td class="num"><a href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>"><b><?= count($mine) ?></b></a></td>
-          <td class="num">
-            <a class="pill sm <?= $minePendingDocs > 0 ? 'bad' : 'ok' ?>" href="<?= h(url('admin/pending.php?officer=' . $o['id'] . '&cat=docs#student-pending-list')) ?>" style="text-decoration:none;">
-              <?= $minePendingDocs ?>
-            </a>
-          </td>
-          <td class="num">
-            <a class="pill sm <?= $minePendingAny > 0 ? 'warn' : 'ok' ?>" href="<?= h(url('admin/pending.php?officer=' . $o['id'] . '&cat=all#student-pending-list')) ?>" style="text-decoration:none;">
-              <?= $minePendingAny ?>
-            </a>
-          </td>
-          <td><span class="pill <?= $d ? 'bad' : 'ok' ?>"><?= $d ?></span></td>
-          <td>
-            <div style="display:flex; gap:0.3rem;">
-              <a class="btn sm" href="<?= h(url('admin/pending.php?officer=' . $o['id'])) ?>">⏳ Pending</a>
-              <a class="btn sm ghost" href="<?= h(url('admin/officers.php?id=' . $o['id'])) ?>">Profile &rarr;</a>
-            </div>
-          </td>
+          <td class="num"><?= $cell('docs', 'bad') ?></td>
+          <td class="num"><?= $cell('consent', 'warn') ?></td>
+          <td class="num"><?= $cell('first_meeting', 'warn') ?></td>
+          <td class="num"><?= $cell('shortlisting', 'warn') ?></td>
+          <td class="num"><span class="cnt <?= $d ? 'bad' : 'zero' ?>"><?= $d ?></span></td>
+          <td><a class="btn sm" href="<?= h(url('admin/pending.php?officer=' . $o['id'] . '#list')) ?>">Pending →</a></td>
         </tr>
       <?php endforeach;
-          $none = count(array_filter($rows, fn($r) => !$r['officer_id'] && empty($r['frontend_officer_id'])));
+          $none = count(array_filter($activeRows, fn($r) => !$r['officer_id'] && empty($r['frontend_officer_id'])));
           if ($none): ?>
-        <tr><td><a href="<?= h(url('admin/officers.php?officer=none')) ?>">Unassigned (FE/BE)</a></td><td class="num"><?= $none ?></td><td></td><td></td><td></td><td><a class="btn sm bad" href="<?= h(url('admin/officers.php?officer=none')) ?>">Assign</a></td></tr>
+        <tr><td><a href="<?= h(url('admin/officers.php?officer=none')) ?>">Unassigned (FE/BE)</a></td><td class="num"><?= $none ?></td><td colspan="5"></td><td><a class="btn sm bad" href="<?= h(url('admin/officers.php?officer=none')) ?>">Assign</a></td></tr>
       <?php endif; ?>
-        <tr class="total"><td><a href="<?= h(url('admin/pending.php')) ?>">Total Unique Students</a></td><td class="num"><?= $n ?></td><td class="num"><a href="<?= h(url('admin/pending.php?cat=docs')) ?>"><?= $pendingDocsCases ?></a></td><td class="num"><a href="<?= h(url('admin/pending.php?cat=all')) ?>"><?= $pendingTotalCases ?></a></td><td></td><td><a class="btn sm primary" href="<?= h(url('admin/pending.php')) ?>">Full Pending Report &rarr;</a></td></tr>
+        <tr class="total"><td>All active students</td><td class="num"><?= count($activeRows) ?></td>
+          <td class="num"><a href="<?= h(url('admin/pending.php?cat=docs#list')) ?>"><?= $pendingDocsCases ?></a></td>
+          <td class="num"><a href="<?= h(url('admin/pending.php?cat=consent#list')) ?>"><?= $pendingConsents ?></a></td>
+          <td class="num"><a href="<?= h(url('admin/pending.php?cat=first_meeting#list')) ?>"><?= $pendingMeetings ?></a></td>
+          <td class="num"><a href="<?= h(url('admin/pending.php?cat=shortlisting#list')) ?>"><?= count(array_filter($activeRows, fn($r) => $r['_p']['shortlisting'])) ?></a></td>
+          <td></td><td><a class="btn sm primary" href="<?= h(url('admin/pending.php')) ?>">Tracker →</a></td></tr>
       </tbody>
     </table></div>
   </section>
 <?php endif; ?>
 
   <section class="panel">
-    <div class="panel-h"><h2><?= $admin ? 'Whole-team pipeline' : 'My pipeline' ?></h2><p>Click any step to view students who completed it</p></div>
+    <div class="panel-h"><h2><?= $admin ? 'Where students are now' : 'Where my students are now' ?></h2><p>Current step of each active student's processing journey — click to list them</p></div>
     <div class="bars">
-    <?php foreach (STAGES as $i => $s):
-        $c = count(array_filter($rows, fn($r) => stage_done($r, $i))); ?>
-      <a class="bar" style="text-decoration:none; color:inherit;" href="<?= h(url($base . '/students.php?done_stage=' . $i)) ?>"><span><?= h($s[0]) ?></span><span class="t"><i style="width:<?= $n ? round($c / $n * 100, 1) : 0 ?>%"></i></span><span class="n num"><?= $c ?></span></a>
+    <?php
+      $nowCount = array_fill_keys(array_keys(JOURNEY_STAGES), 0); $doneAll = 0;
+      $dashSaved = [];
+      foreach (q('SELECT student_id, stage_key, status FROM student_stages') as $sr) $dashSaved[(int)$sr['student_id']][$sr['stage_key']] = $sr['status'];
+      $dashAppRows = [];
+      foreach (q('SELECT student_id, status FROM student_applications') as $ar) $dashAppRows[(int)$ar['student_id']][] = $ar;
+      foreach ($activeRows as $r) {
+          $auto = auto_journey($r, $dashAppRows[(int)$r['id']] ?? [], 0);
+          $cur = null;
+          foreach (JOURNEY_STAGES as $k => $_) { $st = $dashSaved[(int)$r['id']][$k] ?? $auto[$k][0]; if ($st !== 'Completed') { $cur = $k; break; } }
+          if ($cur) $nowCount[$cur]++; else $doneAll++;
+      }
+      $na = max(1, count($activeRows));
+      foreach (JOURNEY_STAGES as $k => $def): ?>
+      <a class="bar" style="text-decoration:none; color:inherit;" href="<?= h(url($base . '/students.php?jnow=' . $k)) ?>"><span><?= h($def[0]) ?></span><span class="t"><i style="width:<?= round($nowCount[$k] / $na * 100, 1) ?>%"></i></span><span class="n num"><?= $nowCount[$k] ?></span></a>
     <?php endforeach; ?>
+      <a class="bar" style="text-decoration:none; color:inherit;" href="<?= h(url($base . '/students.php?pstatus=Completed')) ?>"><span>All steps complete</span><span class="t"><i style="width:<?= round($doneAll / $na * 100, 1) ?>%"></i></span><span class="n num"><?= $doneAll ?></span></a>
     </div>
   </section>
 

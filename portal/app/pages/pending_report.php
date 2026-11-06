@@ -53,7 +53,7 @@ foreach (q('SELECT student_id, COUNT(*) c FROM student_applications GROUP BY stu
 $evaluated = [];
 foreach ($students as $r) {
     $sid = (int)$r['id'];
-    $p = evaluate_student_pending($r, $docStats[$sid] ?? ['received' => 0, 'pending' => 12, 'missing_core' => CORE_DOC_INDICES], $appCounts[$sid] ?? 0);
+    $p = student_pending($r, $docStats[$sid] ?? [], $appCounts[$sid] ?? 0);
     $lastTouch = $r['last_remark_created_at'] ?: ($r['last_edited_at'] ?: $r['created_at']);
     $r['_p'] = $p;
     $r['_idle_days'] = $lastTouch ? max(0, (int)floor((time() - (strtotime((string)$lastTouch) ?: time())) / 86400)) : null;
@@ -128,7 +128,7 @@ function pending_share_text(array $officer, array $sum, array $work, array $rows
     usort($pending, fn($a, $b) => [($b['_pending_hours'] ?? -1), count($b['_p']['items'])] <=> [($a['_pending_hours'] ?? -1), count($a['_p']['items'])]);
     foreach (array_slice($pending, 0, $maxStudents) as $i => $r) {
         $lines[] = ($i + 1) . '. ' . $r['name'] . ' (' . ($r['country'] ?: '—') . ') — ' . implode(', ', $r['_p']['items'])
-                 . ($r['_p']['doc_note'] ? ' | Docs: ' . mb_strimwidth($r['_p']['doc_note'], 0, 60, '…') : '');
+                 . ($r['_p']['docs_missing'] ? ' | Documents: ' . implode(', ', $r['_p']['docs_missing']) : '');
     }
     if (count($pending) > $maxStudents) $lines[] = '…and ' . (count($pending) - $maxStudents) . ' more (see full report).';
     $lines[] = '';
@@ -154,11 +154,11 @@ if (get('download') === 'xlsx') {
             $p = $r['_p'];
             $rowsX[] = [(int)($r['sheet_sr'] ?: $r['id']), $r['name'], $r['country'] ?: '', $r['program_level'] ?: '',
                 $r['fe_user_name'] ?: ($r['frontend_officer_name'] ?: ''), $r['officer_name'] ?: '',
-                $p['any'] ? 'Pending' : 'Clear', implode(', ', $p['items']), $p['doc_note'], implode(', ', $p['missing_core']),
+                $p['any'] ? 'Pending' : 'Clear', implode(', ', $p['items']), implode(', ', $p['docs_missing']), $p['docs_in_hand'] . ' of ' . $p['docs_required'],
                 $r['_pending_hours'] !== null ? $r['_pending_hours'] . 'h' : '', $r['_idle_days'] !== null ? $r['_idle_days'] : '', (string)($r['remarks'] ?? '')];
         }
         stream_xlsx_download('Pending ' . mb_substr($o['name'], 0, 20),
-            ['SR#', 'Student', 'Country', 'Level', 'Front-End', 'Back-End', 'State', 'Pending items', 'Pending docs note', 'Missing in Drive', '48h timer', 'Days since last update', 'Last remark'],
+            ['SR#', 'Student', 'Country', 'Level', 'Front-End', 'Back-End', 'State', 'Open items', 'Documents pending', 'Required documents in hand', '48h timer', 'Days since last update', 'Last remark'],
             $rowsX, 'Pending_Report_' . preg_replace('/\W+/', '_', $o['name']) . '_' . $from . '_to_' . $to . '.xlsx');
     }
     $rowsX = [];
@@ -318,7 +318,7 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
       <div class="panel-h"><div><h2>⏳ Pending by type</h2><p>How many of <?= h($o['name']) ?>'s students are waiting on each item.</p></div></div>
       <div class="bars">
         <?php
-          $types = ['docs' => 'Documents', 'consent' => 'Consent form', 'meetings' => '1st meeting / recording', 'second_tax' => '2nd / tax meeting', 'shortlisting' => 'Shortlisting / applications', 'credentials' => 'Portal / email ID', 'overdue' => '48h remark overdue', 'stale' => 'Untouched 7+ days'];
+          $types = ['docs' => 'Documents', 'consent' => 'Consent form', 'meetings' => '1st meeting / recording', 'second_tax' => '2nd / tax meeting', 'shortlisting' => 'University shortlisting', 'credentials' => 'Email / portal account', 'overdue' => '48h remark overdue', 'stale' => 'Untouched 7+ days'];
           $mx = max(1, $sum['assigned']);
           foreach ($types as $tk => $tl): ?>
           <div class="bar"><span><?= h($tl) ?></span><span class="t"><i style="width:<?= round($sum[$tk] / $mx * 100, 1) ?>%"></i></span><span class="n num"><?= $sum[$tk] ?></span></div>
@@ -345,10 +345,10 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
                 <div class="officer-line"><span class="tag-fe">FE</span> <?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: '—') ?></div>
                 <div class="officer-line"><span class="tag-be">BE</span> <?= h($r['officer_name'] ?: '—') ?></div>
               </td>
-              <td><div style="display:flex; gap:4px; flex-wrap:wrap;"><?php foreach ($p['items'] as $it): ?><span class="pill sm <?= str_contains($it, 'Doc') || str_contains($it, '48h') ? 'bad' : 'warn' ?>"><?= h($it) ?></span><?php endforeach; ?></div></td>
+              <td><div style="display:flex; gap:4px; flex-wrap:wrap;"><?php foreach ($p['items'] as $it): ?><span class="pill sm <?= str_contains($it, 'Doc') || str_contains($it, 'remark') ? 'bad' : 'warn' ?>"><?= h($it) ?></span><?php endforeach; ?></div></td>
               <td class="small">
-                <?php if ($p['doc_note']): ?><div class="pend-note"><b>Note:</b> <span class="pend-note-text"><?= h($p['doc_note']) ?></span></div><?php endif; ?>
-                <?php if ($p['missing_core']): ?><div class="muted"><b>Missing in Drive:</b> <?= h(implode(', ', $p['missing_core'])) ?></div><?php elseif (!$p['doc_note']): ?><span class="muted">—</span><?php endif; ?>
+                <?php if ($p['docs_missing']): ?><div class="chip-row"><?php foreach ($p['docs_missing'] as $dm): ?><span class="doc-chip"><?= h($dm) ?></span><?php endforeach; ?></div>
+                <?php else: ?><span class="pill sm ok">✓ All received</span><?php endif; ?>
               </td>
               <td class="small">
                 <?php if ($r['_pending_hours'] !== null): ?><span class="pill sm <?= $r['_pending_hours'] >= 48 ? 'bad' : 'warn' ?>">⏳ <?= $r['_pending_hours'] ?>h</span><?php endif; ?>

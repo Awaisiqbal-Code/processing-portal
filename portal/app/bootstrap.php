@@ -166,7 +166,7 @@ require APP . '/workflow.php';
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
         $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '007_sessions_journey_assignments'")->fetchColumn();
+            && q("SELECT 1 FROM schema_migrations WHERE version = '008_payments_meetings_docs'")->fetchColumn();
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();

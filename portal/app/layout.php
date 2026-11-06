@@ -77,6 +77,19 @@ function nav_icon(string $href): string {
     return '<svg viewBox="0 0 24 24" aria-hidden="true">' . $p . '</svg>';
 }
 
+/** Small CSS flag (emoji flags show as two letters on Windows). */
+function country_flag(?string $country): string {
+    $code = match (trim((string)$country)) {
+        'Italy' => 'it', 'France' => 'fr', 'Germany' => 'de', 'Czech Republic' => 'cz', 'Austria' => 'at', 'China' => 'cn', default => '',
+    };
+    return $code !== '' ? '<span class="flag flag-' . $code . '" title="' . h($country) . '" aria-hidden="true"></span>' : '<span class="flag flag-xx" aria-hidden="true"></span>';
+}
+function country_flags_map(): array {
+    $m = [];
+    foreach (['Italy', 'France', 'Germany', 'Czech Republic', 'Austria', 'China'] as $c) $m[$c] = country_flag($c);
+    return $m;
+}
+
 function user_initials(string $name): string {
     $parts = preg_split('/\s+/', trim($name)) ?: [];
     $ini = '';

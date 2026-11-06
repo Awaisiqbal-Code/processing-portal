@@ -862,3 +862,50 @@
     initApp();
   }
 })();
+
+/* ---- Profile v3: documents source, meeting options, payment edit toggles ---- */
+(function () {
+  function onReady(fn) { if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+  onReady(function () {
+    // Documents: In Google Drive vs Upload here
+    document.querySelectorAll('.docs-box').forEach(function (box) {
+      box.querySelectorAll('input[name="docs_source"]').forEach(function (r) {
+        r.addEventListener('change', function () { if (r.checked) box.setAttribute('data-src', r.value); });
+      });
+    });
+    // Meeting: Link / Upload video / Not recorded
+    document.querySelectorAll('[data-meet]').forEach(function (m) {
+      function show() {
+        var c = m.querySelector('input[name="meet_mode"]:checked');
+        var v = c ? c.value : 'link';
+        m.querySelectorAll('.meet-pane').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== v; });
+      }
+      m.querySelectorAll('input[name="meet_mode"]').forEach(function (r) { r.addEventListener('change', show); });
+      show();
+    });
+    // "Update" buttons that open the form right after them (payments)
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-toggle-next]') : null;
+      if (!b) return;
+      var row = b.closest('.pay-row');
+      var f = row ? row.querySelector('.pay-form') : null;
+      if (!f) return;
+      f.hidden = !f.hidden;
+      b.textContent = f.hidden ? 'Update' : 'Close';
+    });
+  });
+})();
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-mark-all-docs]') : null;
+    if (!b) return;
+    var box = b.closest('.docs-box'); if (!box) return;
+    box.querySelectorAll('.doc-card:not(.is-optional)').forEach(function (card) {
+      var cur = card.querySelector('.doc-status input:checked');
+      if (cur && (cur.value === 'Received' || cur.value === 'Verified' || cur.value === 'Not Required')) return;
+      var r = card.querySelector('.doc-status input[value="Received"]');
+      if (r) { r.checked = true; card.className = card.className.replace(/ds-[\w-]+/, 'ds-received'); }
+    });
+    b.textContent = '✓ Marked — press Save to keep';
+  });
+})();

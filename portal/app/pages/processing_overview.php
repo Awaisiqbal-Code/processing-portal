@@ -22,6 +22,7 @@ if ($ids) {
     foreach (q('SELECT * FROM student_stages') as $sr) $saved[(int)$sr['student_id']][$sr['stage_key']] = $sr;
     foreach (q('SELECT student_id, status FROM student_applications') as $ar) $apps[(int)$ar['student_id']][] = $ar;
 }
+$ovDocState = $ids ? load_doc_state($ids) : [];
 $names = staff_name_map();
 $statusCount = array_fill_keys(PROCESSING_STATUSES, 0);
 $stageDone = array_fill_keys(array_keys(JOURNEY_STAGES), 0);
@@ -31,6 +32,7 @@ $blank = fn() => ['students' => 0, 'new' => 0, 'progress' => 0, 'pending' => 0, 
 
 foreach ($rows as $r) {
     $sid = (int)$r['id'];
+    $r['_doc_info'] = student_pending_docs($r, $ovDocState[$sid] ?? []);
     $auto = auto_journey($r, $apps[$sid] ?? [], 0);
     $j = [];
     foreach (JOURNEY_STAGES as $k => $_) $j[$k] = ['status' => isset($saved[$sid][$k]) ? $saved[$sid][$k]['status'] : $auto[$k][0]];

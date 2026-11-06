@@ -106,9 +106,12 @@ function auto_journey(array $r, array $apps = [], int $docsReceived = 0): array 
 
     $out['registration'] = ['Completed', $r['received_date'] ?: substr((string)($r['created_at'] ?? ''), 0, 10)];
 
-    if ($yes('docs_checklist') && doc_note_is_empty($r['pending_docs_note'] ?? '')) {
+    $docInfo = $r['_doc_info'] ?? null;
+    if ($docInfo !== null && $docInfo['complete']) {
         $out['documents'] = ['Completed', $r['doc_request_date'] ?? null];
-    } elseif ($yes('docs_checklist') || $docsReceived > 0 || $has('doc_request_date') || !doc_note_is_empty($r['pending_docs_note'] ?? '')) {
+    } elseif ($docInfo === null && $yes('docs_checklist') && doc_note_is_empty($r['pending_docs_note'] ?? '')) {
+        $out['documents'] = ['Completed', $r['doc_request_date'] ?? null];
+    } elseif (($docInfo['in_hand'] ?? 0) > 0 || $docsReceived > 0 || $has('doc_request_date') || !doc_note_is_empty($r['pending_docs_note'] ?? '')) {
         $out['documents'] = ['In Progress', $r['doc_request_date'] ?? null];
     } else {
         $out['documents'] = ['Not Started', null];
@@ -138,9 +141,12 @@ function auto_journey(array $r, array $apps = [], int $docsReceived = 0): array 
         $out['offer'] = ['Not Started', null];
     }
 
-    if ($yes('last_installment')) {
+    $pay = $r['_payments'] ?? null;
+    if ($pay !== null && $pay['received'] > 0 && $pay['received'] === $pay['total'] && $pay['total'] >= 3) {
+        $out['payment'] = ['Completed', $pay['last_date']];
+    } elseif ($yes('last_installment')) {
         $out['payment'] = ['Completed', null];
-    } elseif ($has('installment_1') || $has('consult2') || $yes('enrollment')) {
+    } elseif (($pay['received'] ?? 0) > 0 || $has('consult1') || $has('installment_1') || $has('consult2') || $yes('enrollment')) {
         $out['payment'] = ['In Progress', $r['enrollment_date'] ?? null];
     } else {
         $out['payment'] = ['Not Started', null];
@@ -181,7 +187,13 @@ function student_journey(array $r, ?array $apps = null, ?array $savedRows = null
     if ($staffNames === null) {
         $staffNames = staff_name_map();
     }
-    $docsReceived = $sid ? (int)q("SELECT COUNT(*) FROM student_documents WHERE student_id = ? AND status IN ('Received','Verified')", [$sid])->fetchColumn() : 0;
+    $docsReceived = 0;
+    if ($sid && !isset($r['_doc_info'])) {
+        $r['_doc_info'] = student_pending_docs($r, load_doc_state([$sid])[$sid] ?? []);
+    }
+    if ($sid && !isset($r['_payments'])) {
+        $r['_payments'] = payment_summary(student_payments($r));
+    }
     $auto = auto_journey($r, $apps, $docsReceived);
 
     $out = [];
@@ -517,14 +529,16 @@ function list_communications(int $studentId): array {
 // 6. Pending evaluation (shared by Pending Tracker and Officer Pending Reports)
 // =========================================================================
 
-const CORE_DOC_INDICES = [
-    0 => 'Passport', 1 => 'CNIC', 2 => 'Matric', 3 => 'Inter', 4 => 'Bachelor/Transcript',
-    5 => 'IELTS/Language', 6 => 'CV', 7 => 'Bank Statement', 8 => 'Tax/FBR',
+// Required documents (index in DOCS => short name shown in lists)
+const REQUIRED_DOCS = [
+    0 => 'Passport', 1 => 'CNIC / B-form', 2 => 'Matric', 3 => 'Intermediate', 4 => 'Bachelor degree',
+    5 => 'IELTS / PTE / MOI', 6 => 'CV', 7 => 'Bank statement', 8 => 'Tax documents',
 ];
+const CORE_DOC_INDICES = REQUIRED_DOCS;   // kept for older callers
+const DOC_IN_HAND = ['Received', 'Verified', 'Not Required'];
 
-/** Per-student document counts: received (file + Received/Verified), pending, and missing core docs. */
-function load_doc_stats(?array $studentIds = null): array {
-    $out = [];
+/** Per-student document statuses: [student_id => [doc_index => status]]. Drive and uploaded files count the same. */
+function load_doc_state(?array $studentIds = null): array {
     $sql = 'SELECT student_id, doc_index, status, file_path FROM student_documents';
     $params = [];
     if ($studentIds !== null) {
@@ -532,84 +546,236 @@ function load_doc_stats(?array $studentIds = null): array {
         $sql .= ' WHERE student_id IN (' . implode(',', array_fill(0, count($studentIds), '?')) . ')';
         $params = array_values($studentIds);
     }
-    foreach (q($sql, $params) as $dr) {
-        $sid = (int)$dr['student_id'];
-        if (!isset($out[$sid])) $out[$sid] = ['received' => 0, 'pending' => 0, 'missing_core' => CORE_DOC_INDICES];
-        if (!empty($dr['file_path']) && in_array($dr['status'], ['Received', 'Verified'], true)) {
-            $out[$sid]['received']++;
-            unset($out[$sid]['missing_core'][(int)$dr['doc_index']]);
-        } else {
-            $out[$sid]['pending']++;
-        }
+    $out = [];
+    foreach (q($sql, $params) as $d) {
+        $st = (string)$d['status'];
+        if ($st === 'Uploaded') $st = 'Received';
+        $out[(int)$d['student_id']][(int)$d['doc_index']] = $st;
     }
     return $out;
 }
+/** Backwards-compatible name used by older pages. */
+function load_doc_stats(?array $studentIds = null): array { return load_doc_state($studentIds); }
 
-if (!function_exists('evaluate_student_pending')) {
-function evaluate_student_pending(array $r, array $docStats, int $appCount): array {
-    $country = trim((string)($r['country'] ?? 'Italy')) ?: 'Italy';
-    $isItaly = strtolower($country) === 'italy';
-    $level = strtoupper(trim((string)($r['program_level'] ?? 'MS')));
-
-    $missingCore = $docStats['missing_core'] ?? CORE_DOC_INDICES;
-    if ($level === 'BS') unset($missingCore[4]);
-
-    $noteRaw = trim((string)($r['pending_docs_note'] ?? ''));
-    $hasPendingNote = !doc_note_is_empty($noteRaw);
-    $checklistDone = ($r['docs_checklist'] ?? '') === 'Yes';
-    $receivedDocs = (int)($docStats['received'] ?? 0);
-    $pendingDocsCount = (int)($docStats['pending'] ?? 12);
-
-    $isDocsPending = (!$checklistDone || $hasPendingNote);
-    $isConsentPending = ($r['consent'] ?? '') !== 'Yes';
-    $isFirstMeetingPending = ($r['initial_meeting'] ?? '') !== 'Yes';
-    $isRecordingPending = $isItaly && (($r['recorded_uploaded'] ?? '') !== 'Yes' && empty($r['meeting_link']));
-    $isMeetingsPending = $isFirstMeetingPending || $isRecordingPending;
-    $isTaxPending = $isItaly && (($r['tax_meeting'] ?? '') !== 'Yes');
-    $isSecondMeetingPending = $isItaly && (($r['second_meeting'] ?? '') !== 'Yes');
-    $isSecondTaxPending = $isTaxPending || $isSecondMeetingPending;
-    $shortRaw = strtolower(trim((string)($r['shortlisting'] ?? '')));
-    $shortDone = ($shortRaw !== '' && !str_contains($shortRaw, 'pending') && $shortRaw !== 'no') || $appCount > 0;
-    $isShortlistingPending = !$shortDone;
-    $isCredentialsPending = empty(trim((string)($r['email'] ?? ''))) || empty(trim((string)($r['portal_id'] ?? '')));
-    $isRemarkPending = !empty($r['pending_since']) || empty(trim((string)($r['remarks'] ?? '')));
-
-    $pendingItems = [];
-    if ($isConsentPending)       $pendingItems[] = 'Consent Form';
-    if (!$checklistDone)         $pendingItems[] = 'Docs Checklist';
-    if ($hasPendingNote)         $pendingItems[] = 'Pending Docs Note';
-    if ($isFirstMeetingPending)  $pendingItems[] = '1st Meeting';
-    if ($isRecordingPending)     $pendingItems[] = 'Meeting Recording';
-    if ($isTaxPending)           $pendingItems[] = 'Tax Meeting';
-    if ($isSecondMeetingPending) $pendingItems[] = '2nd Meeting';
-    if ($isShortlistingPending)  $pendingItems[] = 'Shortlisting / Uni Apps';
-    if ($isCredentialsPending)   $pendingItems[] = 'Portal / Email ID';
-    if (!empty($r['pending_since'])) $pendingItems[] = '48h Staff Remark Due';
-
+/**
+ * ONE list of pending documents for a student.
+ * A required document is pending until it is marked Received / Verified / Not Required in the
+ * Documents section (whether the file is in Google Drive or uploaded here makes no difference).
+ * Documents an officer typed in the old "pending documents" sheet note are added to the same list.
+ */
+function student_pending_docs(array $r, array $docStatus): array {
+    $level = strtoupper(trim((string)($r['program_level'] ?? '')));
+    $required = REQUIRED_DOCS;
+    if ($level === 'BS') unset($required[4]);
+    $missing = [];
+    $inHand = 0;
+    foreach ($required as $i => $label) {
+        if (in_array($docStatus[$i] ?? '', DOC_IN_HAND, true)) $inHand++;
+        else $missing[$i] = $label;
+    }
+    // Officer's sheet note ("LOR, bank statement") -> same list, no separate category
+    $note = trim((string)($r['pending_docs_note'] ?? ''));
+    if (!doc_note_is_empty($note)) {
+        $map = ['passport' => 0, 'cnic' => 1, 'b-form' => 1, 'b form' => 1, 'matric' => 2, 'ssc' => 2, '10th' => 2,
+                'inter' => 3, 'hssc' => 3, 'fsc' => 3, '12th' => 3, 'degree' => 4, 'transcript' => 4, 'bachelor' => 4,
+                'ielts' => 5, 'pte' => 5, 'moi' => 5, 'cv' => 6, 'resume' => 6, 'bank' => 7, 'tax' => 8, 'fbr' => 8];
+        if (preg_match('/^\s*all( documents| docs)?\s*(pending|required)?\s*$/i', $note)) {
+            foreach ($required as $i => $label) $missing[$i] = $label;
+        } else {
+            foreach (preg_split('/[,\/\n;&+]|\band\b/i', $note) as $part) {
+                $part = trim($part, " .-\t");
+                if ($part === '' || strlen($part) < 2) continue;
+                $hit = null;
+                foreach ($map as $kw => $idx) {
+                    if (stripos($part, $kw) !== false && isset($required[$idx])) { $hit = $idx; break; }
+                }
+                if ($hit !== null) {
+                    $missing[$hit] = $required[$hit];
+                } else {
+                    $missing['n:' . strtolower($part)] = mb_strimwidth(ucfirst($part), 0, 40, '…');
+                }
+            }
+        }
+    }
+    $inHand = count(array_filter(array_keys($required), fn($i) => !isset($missing[$i])));
     return [
-        'any'              => !empty($pendingItems),
-        'docs'             => $isDocsPending,
-        'checklist_open'   => !$checklistDone,
-        'has_doc_note'     => $hasPendingNote,
-        'doc_note'         => $hasPendingNote ? $noteRaw : '',
-        'received_docs'    => $receivedDocs,
-        'pending_docs_cnt' => $isDocsPending ? $pendingDocsCount : 0,
-        'missing_core'     => $isDocsPending ? array_values($missingCore) : [],
-        'consent'          => $isConsentPending,
-        'meetings'         => $isMeetingsPending,
-        'first_meeting'    => $isFirstMeetingPending,
-        'recording'        => $isRecordingPending,
-        'second_tax'       => $isSecondTaxPending,
-        'tax_meeting'      => $isTaxPending,
-        'second_meeting'   => $isSecondMeetingPending,
-        'shortlisting'     => $isShortlistingPending,
-        'credentials'      => $isCredentialsPending,
-        'remarks'          => $isRemarkPending,
-        'pending_timer'    => !empty($r['pending_since']),
-        'items'            => $pendingItems,
-        'app_count'        => $appCount,
+        'missing'   => array_values($missing),
+        'count'     => count($missing),
+        'in_hand'   => $inHand,
+        'required'  => count($required),
+        'complete'  => !$missing,
     ];
 }
+
+/** Meeting recording state: recorded (link / uploaded video), explained (reason why not), or pending. */
+function meeting_recording_state(array $r): array {
+    $link = trim((string)($r['meeting_link'] ?? ''));
+    $url = safe_link($link) ? $link : null;
+    if ($url && str_contains($url, '/drive/folders/') && $url === trim((string)($r['drive_link'] ?? ''))) $url = null;
+    $video = trim((string)($r['meeting_video_path'] ?? ''));
+    $reason = trim((string)($r['meeting_note'] ?? ''));
+    if ($reason === '' && $link !== '' && !safe_link($link)) $reason = $link;   // old sheets typed the reason in the link column
+    $meetingUrl = function_exists('student_meeting_url') ? student_meeting_url($r) : $url;
+    if ($video !== '' || $meetingUrl || ($r['recorded_uploaded'] ?? '') === 'Yes') {
+        return ['state' => 'recorded', 'url' => $meetingUrl, 'video' => $video !== '', 'reason' => ''];
+    }
+    if ($reason !== '') return ['state' => 'not_recorded', 'url' => null, 'video' => false, 'reason' => $reason];
+    return ['state' => 'pending', 'url' => null, 'video' => false, 'reason' => ''];
+}
+
+const PENDING_TASKS = [
+    'docs'         => 'Documents',
+    'consent'      => 'Consent form',
+    'first_meeting'=> '1st meeting',
+    'recording'    => 'Meeting recording',
+    'second_tax'   => '2nd / tax meeting',
+    'shortlisting' => 'University shortlisting',
+    'credentials'  => 'Email / portal account',
+    'remarks'      => 'Staff remark due',
+];
+
+/**
+ * Everything pending for one student, in plain categories (each student is counted once per category).
+ * $docState = load_doc_state()[student_id] ?? [].
+ */
+function student_pending(array $r, array $docState, int $appCount): array {
+    $country = trim((string)($r['country'] ?? 'Italy')) ?: 'Italy';
+    $isItaly = strtolower($country) === 'italy';
+    $docs = student_pending_docs($r, $docState);
+    $rec = meeting_recording_state($r);
+    $shortRaw = strtolower(trim((string)($r['shortlisting'] ?? '')));
+    $shortDone = ($shortRaw !== '' && !str_contains($shortRaw, 'pending') && $shortRaw !== 'no') || $appCount > 0;
+    $flags = [
+        'docs'          => !$docs['complete'],
+        'consent'       => ($r['consent'] ?? '') !== 'Yes',
+        'first_meeting' => ($r['initial_meeting'] ?? '') !== 'Yes',
+        'recording'     => $isItaly && $rec['state'] === 'pending',
+        'second_tax'    => $isItaly && (($r['second_meeting'] ?? '') !== 'Yes' || ($r['tax_meeting'] ?? '') !== 'Yes'),
+        'shortlisting'  => !$shortDone,
+        'credentials'   => trim((string)($r['email'] ?? '')) === '' || trim((string)($r['portal_id'] ?? '')) === '',
+        'remarks'       => !empty($r['pending_since']),
+    ];
+    $items = [];
+    foreach ($flags as $k => $on) {
+        if (!$on) continue;
+        $items[] = $k === 'docs' ? 'Documents (' . $docs['count'] . ')' : PENDING_TASKS[$k];
+    }
+    $hours = !empty($r['pending_since']) ? max(0, (int)floor((time() - (strtotime((string)$r['pending_since']) ?: time())) / 3600)) : null;
+    return $flags + [
+        'any'           => (bool)array_filter($flags),
+        'items'         => $items,
+        'task_keys'     => array_keys(array_filter($flags)),
+        'docs_missing'  => $docs['missing'],
+        'docs_count'    => $docs['count'],
+        'docs_in_hand'  => $docs['in_hand'],
+        'docs_required' => $docs['required'],
+        'meetings'      => $flags['first_meeting'] || $flags['recording'],
+        'recording_state' => $rec,
+        'remark_hours'  => $hours,
+        'app_count'     => $appCount,
+        // older keys still read by some pages
+        'missing_core'  => $docs['missing'],
+        'received_docs' => $docs['in_hand'],
+        'doc_note'      => '',
+        'has_doc_note'  => false,
+        'checklist_open'=> false,
+        'pending_timer' => !empty($r['pending_since']),
+    ];
+}
+
+/** Compatibility wrapper: older pages pass (row, docStats, appCount). */
+function evaluate_student_pending(array $r, array $docStats, int $appCount): array {
+    // $docStats may be the new [index => status] map or an old stats array
+    $state = (isset($docStats['received']) || isset($docStats['missing_core'])) ? [] : $docStats;
+    return student_pending($r, $state, $appCount);
+}
+
+// =========================================================================
+// 6b. Payments (1st / 2nd / 3rd payment …)
+// =========================================================================
+
+/** Largest meeting video the server will accept (bytes), from php.ini upload limits. */
+function meeting_upload_limit(): int {
+    $toBytes = function (string $v): int {
+        $v = trim($v); if ($v === '') return 0;
+        $n = (float)$v; $u = strtolower(substr($v, -1));
+        return (int)($u === 'g' ? $n * 1073741824 : ($u === 'm' ? $n * 1048576 : ($u === 'k' ? $n * 1024 : $n)));
+    };
+    $a = $toBytes((string)ini_get('upload_max_filesize')); $b = $toBytes((string)ini_get('post_max_size'));
+    $lim = min(array_filter([$a, $b, 512 * 1048576]) ?: [512 * 1048576]);
+    return $lim;
+}
+
+const PAYMENT_METHODS = ['Bank transfer', 'Cash', 'Online / Card', 'Cheque', 'Easypaisa / JazzCash'];
+
+function ordinal_label(int $n): string {
+    return $n . (in_array($n % 100, [11, 12, 13], true) ? 'th' : ([1 => 'st', 2 => 'nd', 3 => 'rd'][$n % 10] ?? 'th'));
+}
+
+/**
+ * Payment rows for a student. Saved rows win; for students never updated here the 1st/2nd/3rd rows
+ * are read from the old sheet columns (consult1 = "1st / 2nd Installment Received", installment_N = amount).
+ */
+function student_payments(array $r): array {
+    $sid = (int)($r['id'] ?? 0);
+    $saved = [];
+    if ($sid) {
+        foreach (q('SELECT p.*, u.name AS updated_by_name FROM student_payments p LEFT JOIN users u ON u.id = p.updated_by WHERE p.student_id = ? ORDER BY installment_no', [$sid]) as $p) {
+            $saved[(int)$p['installment_no']] = $p + ['is_auto' => false];
+        }
+    }
+    $legacy = strtolower(trim((string)($r['consult1'] ?? '')));
+    $receivedUpTo = preg_match('/(\d)/', $legacy, $m) ? (int)$m[1] : 0;
+    if (($r['consult2'] ?? '') !== '' && $receivedUpTo < 2) $receivedUpTo = max($receivedUpTo, (int)preg_replace('/\D/', '', (string)$r['consult2']) ?: 2);
+    if (($r['consult3'] ?? '') !== '' && $receivedUpTo < 3) $receivedUpTo = 3;
+    $rows = [];
+    $max = max(3, $saved ? max(array_keys($saved)) : 0);
+    for ($n = 1; $n <= $max; $n++) {
+        if (isset($saved[$n])) { $rows[$n] = $saved[$n]; continue; }
+        $amt = trim((string)($r['installment_' . $n] ?? ''));
+        if (preg_match('/^\d+\.0$/', $amt)) $amt = substr($amt, 0, -2);
+        $rows[$n] = ['installment_no' => $n, 'status' => $n <= $receivedUpTo ? 'Received' : 'Pending', 'amount' => $amt !== '' ? $amt : null,
+                     'received_date' => null, 'method' => null, 'note' => null, 'updated_by_name' => null, 'updated_at' => null, 'is_auto' => true];
+    }
+    return $rows;
+}
+
+function payment_summary(array $rows): array {
+    $received = 0; $amount = 0.0; $last = null;
+    foreach ($rows as $p) {
+        if ($p['status'] === 'Received') {
+            $received++;
+            $amount += (float)preg_replace('/[^0-9.]/', '', (string)$p['amount']);
+            if ($p['received_date'] && (!$last || $p['received_date'] > $last)) $last = $p['received_date'];
+        }
+    }
+    return ['received' => $received, 'total' => count($rows), 'amount_received' => $amount, 'last_date' => $last];
+}
+
+function save_payment(array $actor, int $studentId, int $no, string $status, ?string $amount, ?string $date, ?string $method, ?string $note): array {
+    if (!can_update_journey($actor)) return ['ok' => false, 'error' => 'You have read-only access to payments.'];
+    if ($no < 1 || $no > 12) return ['ok' => false, 'error' => 'Unknown payment number.'];
+    if (!in_array($status, ['Pending', 'Received', 'Partially received', 'Waived'], true)) return ['ok' => false, 'error' => 'Choose a payment status.'];
+    if ($date !== null && $date !== '' && !valid_date($date)) return ['ok' => false, 'error' => 'Payment date is not valid.'];
+    $amount = trim(mb_substr((string)$amount, 0, 40));
+    if ($amount !== '' && !preg_match('/^[0-9.,\s]+(PKR|Rs\.?|EUR|€|USD|\$)?$/i', $amount)) return ['ok' => false, 'error' => 'Amount should be a number, e.g. 100000.'];
+    $method = in_array($method, PAYMENT_METHODS, true) ? $method : null;
+    $now = now();
+    q('INSERT INTO student_payments (student_id, installment_no, status, amount, received_date, method, note, updated_by, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(student_id, installment_no) DO UPDATE SET status = excluded.status, amount = excluded.amount, received_date = excluded.received_date,
+       method = excluded.method, note = excluded.note, updated_by = excluded.updated_by, updated_at = excluded.updated_at',
+      [$studentId, $no, $status, $amount ?: null, $date ?: null, $method, trim(mb_substr((string)$note, 0, 500)) ?: null, (int)$actor['id'], $now]);
+    // Keep the old sheet columns in step so exports and reports stay correct
+    $st = q('SELECT * FROM students WHERE id = ?', [$studentId])->fetch();
+    $highest = 0;
+    foreach (student_payments($st) as $p) if ($p['status'] === 'Received') $highest = max($highest, (int)$p['installment_no']);
+    $legacy = $highest ? ordinal_label($highest) . ' Installment Received' : null;
+    $set = ['consult1' => $legacy];
+    if ($no <= 4 && $amount !== '') $set['installment_' . $no] = $amount;
+    $sql = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
+    q("UPDATE students SET $sql, updated_at = ? WHERE id = ?", array_merge(array_values($set), [$now, $studentId]));
+    log_activity('student', $studentId, 'payment_updated', null, ['payment' => ordinal_label($no), 'status' => $status, 'amount' => $amount], (int)$actor['id']);
+    return ['ok' => true];
 }
 
 // =========================================================================
