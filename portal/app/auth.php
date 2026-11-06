@@ -88,16 +88,24 @@ function current_user(?string $role = null): ?array {
     }
 
     foreach ($candidates as [$slot, $uid]) {
-        $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department, session_token FROM users WHERE id = ?", [$uid])->fetch();
+        try {
+            $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department, session_token FROM users WHERE id = ?", [$uid])->fetch();
+        } catch (PDOException) {
+            // Database not upgraded yet (migration 007): keep working without the single-session check
+            $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department, '' AS session_token FROM users WHERE id = ?", [$uid])->fetch();
+            if ($row) $_SESSION['auth'][$slot]['sid'] = '';
+        }
         if (!$row || !(int)$row['active']) {
             unset($_SESSION['auth'][$slot]);
             continue;
         }
         // Single active session: if this account signed in somewhere else, this browser is signed out.
         if (single_session_applies((string)$row['role'])) {
+            // An empty token on the account means "no recorded sign-in" (e.g. a serverless instance with its
+            // own database copy) — never sign anyone out on that basis.
             $dbToken = (string)($row['session_token'] ?? '');
             $myToken = (string)($_SESSION['auth'][$slot]['sid'] ?? '');
-            if ($dbToken !== $myToken) {
+            if ($dbToken !== '' && $dbToken !== $myToken) {
                 unset($_SESSION['auth'][$slot]);
                 $_SESSION['session_replaced'] = true;
                 continue;

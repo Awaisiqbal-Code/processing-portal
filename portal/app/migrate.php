@@ -37,17 +37,21 @@ function create_migration_backup(): string {
         throw new RuntimeException("Database file not found at: $dbPath");
     }
 
+    // Pick the first writable backup folder. Serverless hosts (Vercel) have a read-only code
+    // folder, so the system temp folder is the last fallback.
     $volStatus = railway_volume_status();
-    $backupDir = $volStatus['backup_dir'];
-    if (!is_dir($backupDir)) {
-        @mkdir($backupDir, 0775, true);
-    }
-    if (!is_dir($backupDir) || !is_writable($backupDir)) {
-        // Fallback if parent dir is not writable
-        $backupDir = APP . '/backups';
-        if (!is_dir($backupDir)) {
-            @mkdir($backupDir, 0775, true);
+    $backupDir = null;
+    foreach ([$volStatus['backup_dir'], APP . '/backups', rtrim(sys_get_temp_dir(), '/\\') . '/portal_backups'] as $cand) {
+        if (!is_dir($cand)) {
+            @mkdir($cand, 0775, true);
         }
+        if (is_dir($cand) && is_writable($cand)) {
+            $backupDir = $cand;
+            break;
+        }
+    }
+    if ($backupDir === null) {
+        throw new RuntimeException('No writable folder for the pre-migration backup.');
     }
 
     $ts = date('Ymd_His');
