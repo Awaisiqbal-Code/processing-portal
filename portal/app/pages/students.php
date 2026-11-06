@@ -40,6 +40,21 @@ if (is_post() && post('action') === 'bulk_edit') {
     redirect($base . '/students.php' . $returnQs);
 }
 
+// ---------- Quick registration (Add Student modal) ----------
+if (is_post() && post('action') === 'quick_add') {
+    csrf_check();
+    $res = quick_register_student($u, $_POST);
+    if ($res['ok']) {
+        flash('Student registered. Their profile is ready — add documents and details below.');
+        redirect($base . '/student.php?id=' . (int)$res['id'] . '&created=1');
+    }
+    $old = array_intersect_key($_POST, array_flip(['name', 'contact_number', 'email', 'country', 'program_level', 'intake', 'applied_for', 'branch', 'received_date', 'assigned_counselor_id', 'frontend_officer_id', 'officer_id', 'first_note']));
+    if (!empty($res['duplicate_id'])) $old['_duplicate_id'] = (int)$res['duplicate_id'];
+    $_SESSION['quick_add_old'] = $old;
+    flash($res['error'] ?? 'Could not register the student.', 'bad');
+    redirect($base . '/students.php?add=1');
+}
+
 // ---------- Tab Counts for Current Scope ----------
 $cntAll = (int)q("SELECT COUNT(*) FROM students s WHERE $w", $p)->fetchColumn();
 $cntBs = (int)q("SELECT COUNT(*) FROM students s WHERE $w AND s.program_level = 'BS'", $p)->fetchColumn();
@@ -68,6 +83,9 @@ $finc = get('incomplete');
 $fcounselor = get('counselor');
 $fpms = get('pms_lead');
 $sort = get('sort') ?: 'default';
+$fps = get('pstatus');
+$view = get('view') === 'cards' ? 'cards' : (get('view') === 'table' ? 'table' : (($_COOKIE['ptp_students_view'] ?? '') === 'cards' ? 'cards' : 'table'));
+$canFilterOfficer = $admin || $canManage;
 
 $where = [$w];
 $params = $p;
@@ -156,7 +174,7 @@ if ($fpms !== '') {
 }
 
 // Officer filter
-if ($admin && $fo !== '') {
+if ($canFilterOfficer && $fo !== '') {
     if ($fo === 'none') {
         $where[] = '(s.officer_id IS NULL OR s.frontend_officer_id IS NULL)';
     } else {
@@ -180,11 +198,12 @@ $orderSql = match ($sort) {
     'name_asc'         => 'ORDER BY s.name ASC, s.id ASC',
     'name_desc'        => 'ORDER BY s.name DESC, s.id ASC',
     'received_desc'    => 'ORDER BY CASE WHEN s.received_date IS NULL THEN 1 ELSE 0 END, s.received_date DESC, s.id ASC',
+    'received_asc'     => 'ORDER BY CASE WHEN s.received_date IS NULL THEN 1 ELSE 0 END, s.received_date ASC, s.id ASC',
     default            => 'ORDER BY s.id ASC',
 };
 
 // Execute query
-$rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name,
+$rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name, fo.name AS fe_user_name,
                   (SELECT COUNT(*) FROM student_applications sa WHERE sa.student_id = s.id) AS app_count,
                   (SELECT COUNT(*) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS remark_count,
                   (SELECT sr.created_at FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_created_at,
@@ -194,6 +213,7 @@ $rows = q('SELECT s.*, o.name AS officer_name, pms.name AS pms_lead_name,
            FROM students s 
            LEFT JOIN users o ON o.id = s.officer_id 
            LEFT JOIN users pms ON pms.id = s.assigned_pms_lead_id 
+           LEFT JOIN users fo ON fo.id = s.frontend_officer_id 
            WHERE ' . implode(' AND ', $where) . ' ' . $orderSql, $params)->fetchAll();
 
 // In-memory stage filters
@@ -203,6 +223,33 @@ if ($fk === 'offers') $rows = array_values(array_filter($rows, fn($r) => $r['off
 if ($fk === 'visa_granted') $rows = array_values(array_filter($rows, fn($r) => $r['visa'] === 'Granted'));
 if ($fd !== '' && isset(STAGES[(int)$fd])) $rows = array_values(array_filter($rows, fn($r) => stage_done($r, (int)$fd)));
 
+// Processing status (order-style) — computed from the record + saved journey stages
+$allIds = array_map(fn($r) => (int)$r['id'], $rows);
+$stageRowsBy = [];
+$appStatusBy = [];
+if ($allIds) {
+    $ph = implode(',', array_fill(0, count($allIds), '?'));
+    foreach (q("SELECT * FROM student_stages WHERE student_id IN ($ph)", $allIds) as $sr) $stageRowsBy[(int)$sr['student_id']][$sr['stage_key']] = $sr;
+    foreach (q("SELECT student_id, status FROM student_applications WHERE student_id IN ($ph)", $allIds) as $ar) $appStatusBy[(int)$ar['student_id']][] = $ar;
+}
+$staffNames = staff_name_map();
+$statusCounts = array_fill_keys(PROCESSING_STATUSES, 0);
+foreach ($rows as $i => $r) {
+    $sid = (int)$r['id'];
+    $saved = $stageRowsBy[$sid] ?? [];
+    $apps = $appStatusBy[$sid] ?? [];
+    // light journey (no per-row doc query): auto + saved rows
+    $auto = auto_journey($r, $apps, 0);
+    $j = [];
+    foreach (JOURNEY_STAGES as $k => $_) $j[$k] = ['status' => isset($saved[$k]) ? $saved[$k]['status'] : $auto[$k][0], 'label' => JOURNEY_STAGES[$k][0]];
+    $rows[$i]['_journey'] = $j;
+    $rows[$i]['_pstatus'] = processing_status($r, $j);
+    $statusCounts[$rows[$i]['_pstatus']]++;
+}
+if ($fps !== '' && in_array($fps, PROCESSING_STATUSES, true)) {
+    $rows = array_values(array_filter($rows, fn($r) => $r['_pstatus'] === $fps));
+}
+
 $total = count($rows);
 $per = 50;
 $pages = max(1, (int)ceil($total / $per));
@@ -210,7 +257,7 @@ $page = min($pages, max(1, (int)get('page') ?: 1));
 $rows = array_slice($rows, ($page - 1) * $per, $per);
 
 // Reference lists for filter dropdowns
-$officers = $admin ? q("SELECT id, name, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') ORDER BY department DESC, name ASC")->fetchAll() : [];
+$officers = $canFilterOfficer ? q("SELECT id, name, role, COALESCE(department, 'backend') AS department FROM users WHERE role IN ('officer', 'pms_lead', 'processing_staff') ORDER BY department DESC, name ASC")->fetchAll() : [];
 $distinctCountries = q("SELECT DISTINCT country FROM students WHERE country IS NOT NULL AND country != '' ORDER BY country ASC")->fetchAll(PDO::FETCH_COLUMN);
 $counselorsList = q("SELECT id, name, username FROM users WHERE (role = 'counselor' OR id IN (SELECT DISTINCT assigned_counselor_id FROM students WHERE assigned_counselor_id IS NOT NULL)) AND active = 1 ORDER BY name ASC")->fetchAll();
 $pmsLeadsList = q("SELECT id, name FROM users WHERE role = 'pms_lead' AND active = 1 ORDER BY name ASC")->fetchAll();
@@ -222,7 +269,7 @@ $qs = function (array $over) {
 page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : 'My students'), $u, PORTALS[$u['role']]['label']);
 ?>
 
-<?php if ($admin && $fo !== ''): 
+<?php if ($canFilterOfficer && $fo !== ''): 
     $filteredOfficerName = 'Unassigned';
     if ($fo !== 'none') {
         foreach ($officers as $o) {
@@ -238,7 +285,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     Viewing students assigned to Processing Officer: <b><?= h($filteredOfficerName) ?></b> (<?= $total ?> students)
   </div>
   <div style="display:flex; gap:0.4rem;">
-    <?php if ($fo !== 'none'): ?>
+    <?php if ($fo !== 'none' && $admin): ?>
       <a class="btn sm primary" href="<?= h(url('admin/officers.php?id=' . $fo)) ?>">Open Dedicated Workspace →</a>
     <?php endif; ?>
     <a class="btn sm ghost" href="<?= h(url($base . '/students.php')) ?>">Clear Officer Filter</a>
@@ -254,11 +301,12 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </div>
     <div class="row-actions">
       <?php if ($admin): ?><a class="btn sm" href="<?= h(url('admin/export.php')) ?>">Download CSV</a><?php endif; ?>
-      <?php if ($canManage):
-          $addCountryParam = ($fc !== '' && $fc !== 'none') ? '&country=' . rawurlencode($fc) : '';
-          $addBtnLabel = ($fc !== '' && $fc !== 'none') ? '+ Add ' . $fc . ' Student' : '+ Add Student';
-      ?>
-        <a class="btn sm primary" href="<?= h(url($base . '/student.php?new=1' . $addCountryParam)) ?>"><?= h($addBtnLabel) ?></a>
+      <div class="view-toggle" role="group" aria-label="View">
+        <a href="<?= h($qs(['view' => 'table'])) ?>" class="<?= $view === 'table' ? 'on' : '' ?>" data-remember-view="table">☰ Table</a>
+        <a href="<?= h($qs(['view' => 'cards'])) ?>" class="<?= $view === 'cards' ? 'on' : '' ?>" data-remember-view="cards">▦ Cards</a>
+      </div>
+      <?php if (can_quick_add_student($u)): ?>
+        <button type="button" class="btn primary" data-qa-open>＋ Add Student</button>
       <?php endif; ?>
     </div>
   </div>
@@ -298,6 +346,14 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </a>
   </div>
 
+  <!-- Order-style processing status chips -->
+  <div class="status-chips">
+    <a href="<?= h($qs(['pstatus' => null, 'page' => 1])) ?>" class="status-chip <?= $fps === '' ? 'on' : '' ?>">All <b><?= array_sum($statusCounts) ?></b></a>
+    <?php foreach (PROCESSING_STATUSES as $psOpt): ?>
+      <a href="<?= h($qs(['pstatus' => $psOpt, 'page' => 1])) ?>" class="status-chip <?= processing_status_class($psOpt) ?> <?= $fps === $psOpt ? 'on' : '' ?>"><i></i><?= h($psOpt) ?> <b><?= $statusCounts[$psOpt] ?></b></a>
+    <?php endforeach; ?>
+  </div>
+
   <?php
     $activeFilters = [];
     if ($tab !== 'all') $activeFilters['tab'] = 'Degree: ' . strtoupper($tab);
@@ -317,6 +373,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     if ($finc !== '')   $activeFilters['incomplete'] = $finc === '1' ? 'Incomplete' : 'Complete';
     if ($fr !== '')     $activeFilters['refund'] = 'Refund: ' . $fr;
     if ($fs !== '')     $activeFilters['stage'] = 'Next Step: ' . $fs;
+    if ($fps !== '')    $activeFilters['pstatus'] = 'Status: ' . $fps;
     if ($fk !== '')     $activeFilters['kpi'] = 'KPI: ' . ucfirst(str_replace('_', ' ', $fk));
     if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Stage Done: ' . STAGES[(int)$fd][0];
   ?>
@@ -339,7 +396,9 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
   <!-- Advanced Filtering Toolbar -->
   <form method="get" action="<?= h(url($base . '/students.php')) ?>" class="toolbar" style="gap:0.45rem; flex-wrap:wrap; align-items:center;">
     <input type="hidden" name="tab" value="<?= h($tab) ?>">
-    <?php if ($fo !== '' && !$admin): ?><input type="hidden" name="officer" value="<?= h($fo) ?>"><?php endif; ?>
+    <input type="hidden" name="view" value="<?= h($view) ?>">
+    <?php if ($fps !== ''): ?><input type="hidden" name="pstatus" value="<?= h($fps) ?>"><?php endif; ?>
+    <?php if ($fo !== '' && !$canFilterOfficer): ?><input type="hidden" name="officer" value="<?= h($fo) ?>"><?php endif; ?>
     <input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search name, SR#, email, counselor..." aria-label="Search" style="min-width:200px;">
 
     <!-- Country Filter -->
@@ -401,7 +460,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     <?php endif; ?>
 
     <!-- Officer Filter -->
-    <?php if ($admin): ?>
+    <?php if ($canFilterOfficer): ?>
     <select name="officer" aria-label="Officer" data-autosubmit>
       <option value="">All officers (FE &amp; BE)</option>
       <optgroup label="Front End Processing Officers">
@@ -430,7 +489,8 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
       <option value="last_edited_asc" <?= $sort === 'last_edited_asc' ? 'selected' : '' ?>>Sort: Last Edited (Oldest)</option>
       <option value="name_asc" <?= $sort === 'name_asc' ? 'selected' : '' ?>>Sort: Name (A-Z)</option>
       <option value="name_desc" <?= $sort === 'name_desc' ? 'selected' : '' ?>>Sort: Name (Z-A)</option>
-      <option value="received_desc" <?= $sort === 'received_desc' ? 'selected' : '' ?>>Sort: Received Date</option>
+      <option value="received_desc" <?= $sort === 'received_desc' ? 'selected' : '' ?>>Sort: Registration Date (Newest)</option>
+      <option value="received_asc" <?= $sort === 'received_asc' ? 'selected' : '' ?>>Sort: Registration Date (Oldest)</option>
     </select>
 
     <button class="btn sm" type="submit">Apply</button>
@@ -468,7 +528,60 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </div>
   <?php endif; ?>
 
-  <div class="tbl" style="margin-top:0.75rem;"><table>
+  <?php
+    $flagMapAll = ['Italy' => '🇮🇹', 'France' => '🇫🇷', 'Germany' => '🇩🇪', 'Czech Republic' => '🇨🇿', 'Austria' => '🇦🇹', 'China' => '🇨🇳'];
+    $journeyBar = function (array $j): string {
+        $html = '<span class="jbar" title="Processing journey">';
+        foreach ($j as $st) $html .= '<i class="' . stage_status_class($st['status']) . '" title="' . h($st['label'] . ': ' . $st['status']) . '"></i>';
+        return $html . '</span>';
+    };
+    $journeyNow = function (array $j): string {
+        foreach ($j as $st) if ($st['status'] !== 'Completed') return $st['label'];
+        return 'All steps complete';
+    };
+  ?>
+  <?php if ($view === 'cards'): ?>
+  <div class="order-grid">
+    <?php foreach ($rows as $r):
+        $editUrl = url($base . '/student.php?id=' . $r['id']);
+        $cName = trim((string)($r['country'] ?? ''));
+        $feName = $r['fe_user_name'] ?: ($r['frontend_officer_name'] ?: '');
+        $done = count(array_filter($r['_journey'], fn($x) => $x['status'] === 'Completed'));
+    ?>
+      <article class="order-card <?= !empty($r['pending_since']) ? 'is-pending' : '' ?>">
+        <header>
+          <span class="order-id">#<?= (int)($r['sheet_sr'] ?: $r['id']) ?> · ID <?= (int)$r['id'] ?></span>
+          <?= processing_status_badge($r['_pstatus']) ?>
+        </header>
+        <a class="order-name" href="<?= h($editUrl) ?>"><?= h($r['name']) ?></a>
+        <div class="order-tags">
+          <?php if ($cName !== ''): ?><span class="pill sm"><?= $flagMapAll[$cName] ?? '📍' ?> <?= h($cName) ?></span><?php else: ?><span class="pill sm warn">No country</span><?php endif; ?>
+          <?php if (!empty($r['program_level'])): ?><span class="pill sm acc"><?= h($r['program_level']) ?></span><?php endif; ?>
+          <?php if (!empty($r['intake'])): ?><span class="pill sm"><?= h($r['intake']) ?></span><?php endif; ?>
+          <?php if (!empty($r['is_refunded'])): ?><span class="pill sm bad">Refunded</span><?php endif; ?>
+        </div>
+        <dl class="order-meta">
+          <div><dt>Front-End</dt><dd><?= h($feName ?: '—') ?></dd></div>
+          <div><dt>Back-End</dt><dd><?= h($r['officer_name'] ?: '—') ?></dd></div>
+          <div><dt>Counselor</dt><dd><?= h($r['counselor'] ?: '—') ?></dd></div>
+          <div><dt>Registered</dt><dd><?= h(fmt_date($r['received_date']) ?: '—') ?></dd></div>
+        </dl>
+        <div class="order-journey">
+          <?= $journeyBar($r['_journey']) ?>
+          <span class="small"><b><?= $done ?>/8</b> · <?= h($journeyNow($r['_journey'])) ?></span>
+        </div>
+        <footer>
+          <?= last_remarks_cell($r) ?>
+          <div class="order-actions">
+            <a class="btn sm primary" href="<?= h($editUrl) ?>">Open</a>
+            <?php if ($dl = safe_link($r['drive_link'] ?? null)): ?><a class="btn sm" href="<?= h($dl) ?>" target="_blank" rel="noopener noreferrer" title="Google Drive folder">📁</a><?php endif; ?>
+          </div>
+        </footer>
+      </article>
+    <?php endforeach; ?>
+  </div>
+  <?php else: ?>
+  <div class="tbl tbl-students" style="margin-top:0.75rem;"><table>
     <thead>
       <tr>
         <?php if ($canManage): ?>
@@ -477,19 +590,16 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         <th>SR#</th>
         <th>Student</th>
         <th>Program &amp; Country</th>
-        <th>Counselor</th>
-        <?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?>
+        <th>Processing Officers</th>
+        <th>Journey</th>
         <th>Docs &amp; Meeting</th>
-        <th>Refund</th>
-        <th>Received</th>
-        <th>Last Remarks (Click Dots)</th>
-        <th>Next step</th>
+        <th>Registered</th>
+        <th>Last Remarks</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
     <?php foreach ($rows as $r):
-        $ns = next_stage($r);
         $dLink = safe_link($r['drive_link'] ?? null);
         $hasMeeting = student_has_meeting($r);
         $mLink = url('meeting.php?id=' . (int)$r['id']);
@@ -501,65 +611,46 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         $isIncomplete = empty($r['program_level']) || empty($r['country']);
         $hasBranchError = ($r['branch'] === '30%');
         $editUrl = url($base . '/student.php?id=' . $r['id']);
+        $feName = $r['fe_user_name'] ?: ($r['frontend_officer_name'] ?: '');
     ?>
-      <tr class="<?= $isPending ? 'row-pending' : '' ?>" style="<?= $isPending ? 'background:rgba(239,68,68,0.04);' : '' ?>">
+      <tr class="<?= $isPending ? 'row-pending' : '' ?>">
         <?php if ($canManage): ?>
           <td style="text-align:center;">
             <input type="checkbox" name="selected_ids[]" value="<?= (int)$r['id'] ?>" class="student-checkbox" onchange="updateBulkCount()">
           </td>
         <?php endif; ?>
         <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
-        <td>
+        <td class="wrap" style="min-width:210px;">
           <a href="<?= h($editUrl) ?>" style="text-decoration:none;">
             <b style="color:var(--fg);"><?= h($r['name']) ?></b>
           </a>
-          <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-top:0.25rem;">
-            <!-- Status Badge -->
-            <span class="pill sm <?= $stStatus === 'active' ? 'ok' : ($stStatus === 'disabled' ? 'bad' : 'warn') ?>" style="<?= $stStatus === 'disabled' ? 'background:#64748b;color:#fff;' : '' ?>">
-              <?= ucfirst($stStatus) ?>
-            </span>
-
-            <!-- Verified Badge -->
+          <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-top:0.3rem; align-items:center;">
+            <?= processing_status_badge($r['_pstatus']) ?>
+            <?php if ($stStatus !== 'active'): ?>
+              <span class="pill sm <?= $stStatus === 'disabled' ? 'bad' : 'warn' ?>"><?= ucfirst($stStatus) ?></span>
+            <?php endif; ?>
             <?php if ($isVerified): ?>
-              <span class="pill sm ok" title="Verified by <?= h($r['csc_verified_by'] ?? 'Staff') ?>">✓ Verified</span>
+              <span class="pill sm ok" title="Verified">✓ Verified</span>
             <?php endif; ?>
-
-            <!-- Pending Badge -->
             <?php if ($isPending): ?>
-              <span class="pill sm bad" style="font-weight:700;" title="Pending processing staff / lead response">⚠ PENDING</span>
+              <span class="pill sm bad" style="font-weight:700;" title="Pending processing staff / lead response">⚠ 48h</span>
             <?php endif; ?>
-
-            <!-- Refunded Flag -->
             <?php if ($isRefunded): ?>
               <span class="pill sm bad" title="Refund processed on <?= h($r['refund_date'] ?? '') ?>">Refunded</span>
             <?php endif; ?>
-
-            <!-- Incomplete Flag -->
             <?php if ($isIncomplete): ?>
               <span class="pill sm warn" title="Program Level or Country incomplete">Incomplete</span>
             <?php endif; ?>
-
-            <!-- Branch 30% Error Flag -->
             <?php if ($hasBranchError): ?>
-              <span class="pill sm bad" style="border:1px solid #dc2626; background:#fef2f2; color:#b91c1c; font-weight:600;" title="Data error: Legacy CSV column shift in branch field">⚠ Branch: 30%</span>
+              <span class="pill sm bad" title="Data error: Legacy CSV column shift in branch field">⚠ Branch: 30%</span>
             <?php endif; ?>
           </div>
-          <?php if (!empty($r['last_remark_text'])): ?>
-            <div class="small muted" style="margin-top:0.35rem; font-size:0.75rem; line-height:1.35; max-width:320px;">
-              💬 <b><?= h($r['last_remark_author_name'] ?: 'Staff') ?>:</b>
-              <?php if (($r['last_remark_author_role'] ?? '') === 'counselor'): ?>
-                <span class="pill sm" style="background:#0284c7; color:#fff; font-size:0.62rem; padding:0.05rem 0.35rem; font-weight:600; vertical-align:middle;">Counselor</span>
-              <?php endif; ?>
-              <?= h(mb_strimwidth((string)$r['last_remark_text'], 0, 70, '…')) ?>
-              <span style="font-size:0.7rem; color:var(--muted); opacity:0.85;">· <?= h(fmt_date(substr((string)$r['last_remark_created_at'], 0, 10))) ?></span>
-            </div>
-          <?php endif; ?>
         </td>
-        <td>
+        <td class="wrap" style="min-width:150px;">
           <div style="display:flex; flex-direction:column; gap:0.2rem;">
             <div style="display:flex; gap:0.25rem; flex-wrap:wrap; align-items:center;">
               <?= !empty($r['program_level']) ? '<span class="pill sm acc">' . h($r['program_level']) . '</span>' : '<span class="pill sm muted" style="opacity:0.6;">No Program</span>' ?>
-              <?= !empty($r['country']) ? '<span class="pill sm">' . h($r['country']) . '</span>' : '<span class="pill sm warn">No Country</span>' ?>
+              <?= !empty($r['country']) ? '<span class="pill sm">' . ($flagMapAll[$r['country']] ?? '') . ' ' . h($r['country']) . '</span>' : '<span class="pill sm warn">No Country</span>' ?>
             </div>
             <?php if ((int)($r['app_count'] ?? 0) > 0): ?>
               <div><a href="<?= h($editUrl . '#applications') ?>" class="pill sm ok" style="text-decoration:none; font-weight:600;">🏛 <?= (int)$r['app_count'] ?> Univ. App<?= (int)$r['app_count'] > 1 ? 's' : '' ?></a></div>
@@ -567,53 +658,44 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
             <?php if (!empty($r['applied_for']) && $r['applied_for'] !== ($r['program_level'] ?? '')): ?>
               <div class="small muted" style="font-size:0.72rem;">Track: <b><?= h($r['applied_for']) ?></b></div>
             <?php endif; ?>
-            <?php if (!empty($r['last_degree']) || !empty($r['gpa']) || !empty($r['ielts_score'])): ?>
-              <div class="small muted" style="font-size:0.72rem;">
-                <?= h(trim(($r['last_degree'] ?? '') . (!empty($r['gpa']) ? ' · GPA: ' . $r['gpa'] : '') . (!empty($r['ielts_score']) ? ' · IELTS: ' . $r['ielts_score'] : ''))) ?>
-              </div>
-            <?php endif; ?>
-            <?php if (!empty($r['campus_france_status'])): ?>
-              <div class="small muted" style="font-size:0.72rem;">CF: <b><?= h($r['campus_france_status']) ?></b></div>
-            <?php endif; ?>
           </div>
         </td>
-        <td>
-          <?= h($r['counselor']) ?>
+        <td class="small wrap" style="min-width:150px;">
+          <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h($feName ?: 'Not set') ?></b></div>
+          <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?? 'Not assigned') ?></b></div>
+          <?php if (!empty($r['counselor'])): ?><div class="muted" style="font-size:11.5px; margin-top:2px;">Counselor: <?= h($r['counselor']) ?></div><?php endif; ?>
         </td>
-        <?php if ($admin): ?>
-          <td class="small">
-            <div><span class="muted">FE:</span> <b><?= h($r['frontend_officer_name'] ?: 'Not set') ?></b></div>
-            <div><span class="muted">BE:</span> <b><?= h($r['officer_name'] ?? 'Not assigned') ?></b></div>
-          </td>
-        <?php endif; ?>
+        <td class="wrap" style="min-width:150px;">
+          <?= $journeyBar($r['_journey']) ?>
+          <div class="small muted" style="margin-top:4px; font-size:11.5px;"><?= h($journeyNow($r['_journey'])) ?></div>
+        </td>
         <td>
-          <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
+          <div style="display:flex; gap:0.3rem; align-items:center; flex-wrap:wrap; max-width:170px;">
             <?php if ($dLink): ?>
               <a class="btn sm" href="<?= h($dLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Google Drive Documents Folder">📁 Docs</a>
             <?php endif; ?>
             <?php if ($hasMeeting): ?>
-              <a class="btn sm" href="<?= h($mLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Recorded Meeting Video / Zoom">🎥 Meeting</a>
-            <?php else: ?>
-              <span class="pill muted" style="font-size:0.72rem; padding:0.2rem 0.45rem; background:rgba(100,116,139,0.12); color:#64748b;" title="Meeting video not available">Not Available</span>
+              <a class="btn sm" href="<?= h($mLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Recorded Meeting Video / Zoom">🎥</a>
             <?php endif; ?>
-            <a class="btn sm ghost" href="<?= h(url($base . '/report.php?id=' . $r['id'] . '&format=pdf')) ?>" title="Download Complete Student PDF Dossier">⬇ PDF</a>
+            <a class="btn sm ghost" href="<?= h(url($base . '/report.php?id=' . $r['id'] . '&format=pdf')) ?>" title="Download Complete Student PDF Dossier">⬇</a>
           </div>
         </td>
-        <td><?php if ($r['refund']): ?><span class="pill <?= $r['refund'] === 'Non-Refundable' ? 'bad' : '' ?>"><?= h($r['refund']) ?></span><?php endif; ?></td>
-        <td class="num"><?= h(fmt_date($r['received_date'])) ?></td>
+        <td class="num small">
+          <?= h(fmt_date($r['received_date']) ?: '—') ?>
+          <?php if ($r['refund']): ?><div style="margin-top:3px;"><span class="pill sm <?= $r['refund'] === 'Non-Refundable' ? 'bad' : '' ?>" title="Refund policy tier"><?= h($r['refund']) ?></span></div><?php endif; ?>
+        </td>
         <td><?= last_remarks_cell($r) ?></td>
-        <td><?= $ns ? '<span class="pill acc">' . h($ns) . '</span>' : '<span class="pill ok">Closed</span>' ?></td>
         <td>
-          <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
-            <a class="btn sm" href="<?= h($editUrl) ?>"><?= $u['role'] === 'counselor' ? 'View' : 'Edit' ?></a>
-            <button type="button" class="btn sm ghost" data-open-remarks="<?= (int)$r['id'] ?>" data-student-name="<?= h($r['name']) ?>">💬 Remarks</button>
-            <a class="btn sm primary" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>">File</a>
+          <div style="display:flex; gap:0.3rem; align-items:center;">
+            <a class="btn sm primary" href="<?= h($editUrl) ?>"><?= $u['role'] === 'counselor' ? 'View' : 'Open' ?></a>
+            <a class="btn sm ghost" href="<?= h(url($base . '/progress.php?id=' . $r['id'])) ?>" title="Student file (documents &amp; progress)">File</a>
           </div>
         </td>
       </tr>
     <?php endforeach; ?>
     </tbody>
   </table></div>
+  <?php endif; ?>
 
   <?php if ($canManage): ?>
   </form>
@@ -644,4 +726,5 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
   <?php endif; ?>
   <?php endif; ?>
 </section>
+<?php require APP . '/pages/_quick_add.php'; ?>
 <?php page_end();

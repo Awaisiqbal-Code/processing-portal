@@ -7,6 +7,11 @@ require_once APP . '/reports.php';
 require_once APP . '/reporting_service.php';
 
 $u = require_role('admin');
+if (get('tab') === 'overview') {
+    $reportsUrl = url('admin/reports.php');
+    require APP . '/pages/processing_overview.php';
+    exit;
+}
 
 $viewTab = get('tab') ?: 'operations';
 $today = date('Y-m-d');
@@ -75,6 +80,8 @@ if ($viewTab === 'operations') {
     <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
       <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
       <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
+      <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=overview')) ?>">Processing Overview</a>
+      <a class="btn sm ghost" href="<?= h(url('admin/pending_report.php')) ?>">Officer Pending Reports</a>
       <a class="btn sm ghost" href="<?= h(url('admin/disabled_refunds.php')) ?>">Disabled &amp; Refunds Audit &rarr;</a>
     </div>
 
@@ -496,6 +503,7 @@ page_start('Monthly Reports', $u, PORTALS['admin']['label']);
   <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
     <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
     <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
+    <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=overview')) ?>">Processing Overview</a>
     <a class="btn sm ghost" href="<?= h(url('admin/disabled_refunds.php')) ?>">Disabled &amp; Refunds Audit &rarr;</a>
   </div>
 

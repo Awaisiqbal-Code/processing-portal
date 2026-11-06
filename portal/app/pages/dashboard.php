@@ -266,6 +266,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   <div class="row-actions">
     <a class="btn sm" style="background:rgba(255,255,255,0.14); color:#FFFFFF; border-color:rgba(116,195,228,0.5);" href="<?= h(url($base . '/pending.php')) ?>">⏳ Open Pending Tracker &rarr;</a>
     <a class="btn sm primary" style="background:#1392CB; border-color:#74C3E4;" href="<?= h(url($base . '/students.php')) ?>">Manage All Students &rarr;</a>
+    <?php if (can_quick_add_student($u)): ?><button type="button" class="btn sm" data-qa-open style="background:#fff; color:#0F5D9E; border-color:#fff;">＋ Add Student</button><?php endif; ?>
   </div>
 </div>
 
@@ -421,13 +422,28 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
         return array_slice($m, 0, 10, true);
     }; ?>
 <div class="grid2">
-  <?php foreach (['counselor' => 'Students per counselor', 'refund' => 'Refund status'] as $key => $title):
-      $g = $groups($key); $max = max($g ?: [1]); ?>
+  <?php
+    // Students per processing officer (front-end + back-end), from real assignments
+    $officerLoad = [];
+    $officerIdsByName = [];
+    foreach ($rows as $r) {
+        foreach ([(int)($r['frontend_officer_id'] ?? 0), (int)($r['officer_id'] ?? 0)] as $oidL) {
+            if (!$oidL) continue;
+            $nm = staff_name_map()[$oidL] ?? null;
+            if (!$nm) continue;
+            $officerLoad[$nm] = ($officerLoad[$nm] ?? 0) + 1;
+            $officerIdsByName[$nm] = $oidL;
+        }
+    }
+    arsort($officerLoad);
+  ?>
+  <?php foreach (['officer' => 'Students per processing officer', 'refund' => 'Refund status'] as $key => $title):
+      $g = $key === 'officer' ? $officerLoad : $groups($key); $max = max($g ?: [1]); ?>
   <section class="panel">
-    <div class="panel-h"><h2><?= h($title) ?></h2><p><?= $key === 'counselor' ? 'Top 10 (click to filter)' : 'All students (click to filter)' ?></p></div>
+    <div class="panel-h"><h2><?= h($title) ?></h2><p><?= $key === 'officer' ? 'Front-end and back-end caseload (click to filter)' : 'All students (click to filter)' ?></p></div>
     <div class="bars">
     <?php foreach ($g as $k => $c):
-        $filterHref = $key === 'counselor' ? url('admin/students.php?q=' . rawurlencode((string)$k)) : url('admin/students.php?refund=' . rawurlencode((string)$k)); ?>
+        $filterHref = $key === 'officer' ? url('admin/students.php?officer=' . (int)($officerIdsByName[$k] ?? 0)) : url('admin/students.php?refund=' . rawurlencode((string)$k)); ?>
       <a class="bar" style="text-decoration:none; color:inherit;" href="<?= h($filterHref) ?>"><span><?= h($k) ?></span><span class="t"><i style="width:<?= round($c / $max * 100, 1) ?>%"></i></span><span class="n num"><?= $c ?></span></a>
     <?php endforeach; ?>
     </div>
@@ -447,7 +463,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <div class="empty">No students assigned yet.</div>
   <?php else: ?>
   <div class="tbl"><table>
-    <thead><tr><th>SR#</th><th>Student</th><th>Country &amp; Program</th><th>Counselor</th><?php if ($admin): ?><th>Officers (FE / BE)</th><?php endif; ?><th>Docs & Meeting</th><th>Refund</th><th>Last Remarks (Click Dots)</th><th>Next step</th><th>Actions</th></tr></thead>
+    <thead><tr><th>SR#</th><th>Student</th><th>Country &amp; Program</th><th>Processing Officers</th><th>Docs & Meeting</th><th>Refund</th><th>Last Remarks (Click Dots)</th><th>Next step</th><th>Actions</th></tr></thead>
     <tbody>
     <?php foreach (array_slice($rows, 0, 25) as $r):
         $ns = next_stage($r);
@@ -462,13 +478,11 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
           <span class="pill sm"><?= h($r['country'] ?: 'Italy') ?></span>
           <?php if (!empty($r['program_level'])): ?><span class="pill sm acc"><?= h($r['program_level']) ?></span><?php endif; ?>
         </td>
-        <td><?= h($r['counselor'] ?: '-') ?></td>
-        <?php if ($admin): ?>
-          <td class="small">
-            <div><span class="muted">FE:</span> <b><?= h($r['frontend_officer_name'] ?: 'Not set') ?></b></div>
-            <div><span class="muted">BE:</span> <b><?= h($r['officer_name'] ?? 'Not assigned') ?></b></div>
-          </td>
-        <?php endif; ?>
+        <td class="small">
+          <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h($r['frontend_officer_name'] ?: 'Not set') ?></b></div>
+          <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?? 'Not assigned') ?></b></div>
+          <?php if (!empty($r['counselor'])): ?><div class="muted" style="font-size:11.5px;">Counselor: <?= h($r['counselor']) ?></div><?php endif; ?>
+        </td>
         <td>
           <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
             <?php if ($dLink): ?>
@@ -505,4 +519,5 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   <?php include APP . '/pages/_followups.php'; ?>
 </section>
 <?php endif;
+require APP . '/pages/_quick_add.php';
 page_end();

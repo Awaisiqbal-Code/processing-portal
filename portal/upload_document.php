@@ -161,7 +161,7 @@ if ($docIndex >= 0 && isset(DOCS[$docIndex])) {
         if (!empty($existing['file_path']) && !str_starts_with($existing['file_path'], 'gdrive:') && is_file(ROOT . '/' . ltrim($existing['file_path'], '/\\'))) {
             @unlink(ROOT . '/' . ltrim($existing['file_path'], '/\\'));
         }
-        q("UPDATE student_documents SET status = 'Uploaded', file_path = ?, file_name = ?, file_size = ?, mime_type = ?, uploaded_at = ?, uploaded_by = ?, updated_by = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?",
+        q("UPDATE student_documents SET status = 'Received', file_path = ?, file_name = ?, file_size = ?, mime_type = ?, uploaded_at = ?, uploaded_by = ?, updated_by = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?",
           [$relPath, $origName, $fileSize, $mimeType, now(), $u['id'], $u['id'], now(), $studentId, $docIndex]);
     } else {
         q("INSERT INTO student_documents (student_id, doc_index, status, file_path, file_name, file_size, mime_type, uploaded_at, uploaded_by, updated_by, updated_at) VALUES (?, ?, 'Received', ?, ?, ?, ?, ?, ?, ?, ?)",

@@ -88,11 +88,22 @@ function current_user(?string $role = null): ?array {
     }
 
     foreach ($candidates as [$slot, $uid]) {
-        $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department FROM users WHERE id = ?", [$uid])->fetch();
+        $row = q("SELECT id, name, username, role, student_id, active, must_change_password, COALESCE(department, 'backend') AS department, session_token FROM users WHERE id = ?", [$uid])->fetch();
         if (!$row || !(int)$row['active']) {
             unset($_SESSION['auth'][$slot]);
             continue;
         }
+        // Single active session: if this account signed in somewhere else, this browser is signed out.
+        if (single_session_applies((string)$row['role'])) {
+            $dbToken = (string)($row['session_token'] ?? '');
+            $myToken = (string)($_SESSION['auth'][$slot]['sid'] ?? '');
+            if ($dbToken !== $myToken) {
+                unset($_SESSION['auth'][$slot]);
+                $_SESSION['session_replaced'] = true;
+                continue;
+            }
+        }
+        unset($row['session_token']);
         if ($role !== null && !role_satisfies($row['role'], $role)) {
             continue;
         }
@@ -117,6 +128,15 @@ function logout_now(?string $role = null): void {
             }
         }
     } else {
+        // Release the single-session token so the account is free to sign in elsewhere
+        foreach ($_SESSION['auth'] ?? [] as $sess) {
+            if (!empty($sess['uid']) && !empty($sess['sid'])) {
+                try {
+                    q('UPDATE users SET session_token = NULL WHERE id = ? AND session_token = ?', [(int)$sess['uid'], (string)$sess['sid']]);
+                    record_session_event((int)$sess['uid'], 'logout');
+                } catch (Throwable) {}
+            }
+        }
         $_SESSION['auth'] = [];
     }
 
@@ -133,6 +153,22 @@ function logout_now(?string $role = null): void {
             session_destroy();
         }
     }
+}
+
+/** Roles that are limited to one active browser at a time (all staff by default). */
+function single_session_applies(string $role): bool {
+    $scope = (string)setting('single_session_scope', 'staff');
+    if ($scope === 'off') return false;
+    if ($scope === 'all') return true;
+    return is_staff_role($role);
+}
+
+function record_session_event(int $userId, string $event): void {
+    try {
+        q('INSERT INTO user_session_events (user_id, event, ip, agent, created_at) VALUES (?,?,?,?,?)', [
+            $userId, $event, client_ip(), mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250), now(),
+        ]);
+    } catch (Throwable) {}
 }
 
 /** Too many failed attempts for this username or this IP in the last 15 minutes? */
@@ -173,13 +209,29 @@ function attempt_login(string $portal, string $username, string $password): ?str
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_regenerate_id(true);
     }
+    // Single active session (banking style): a fresh token replaces any older browser's token.
+    $sessionToken = bin2hex(random_bytes(24));
+    try {
+        if (!empty($u['session_token'])) {
+            record_session_event((int)$u['id'], 'replaced_previous_session');
+        }
+        q('UPDATE users SET session_token = ?, session_started_at = ?, session_ip = ?, session_agent = ? WHERE id = ?', [
+            $sessionToken, now(), client_ip(), mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 250), $u['id'],
+        ]);
+        record_session_event((int)$u['id'], 'login');
+    } catch (Throwable $e) {
+        error_log('session token update failed: ' . $e->getMessage());
+    }
+
     $_SESSION['auth'] = [
         $actualRole => [
             'uid'  => (int)$u['id'],
             'role' => $actualRole,
             'last' => time(),
+            'sid'  => $sessionToken,
         ],
     ];
+    unset($_SESSION['session_replaced']);
     $_SESSION['last_login_role'] = $actualRole;
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 
@@ -248,8 +300,7 @@ function require_role(string $role, bool $allowPasswordChange = false): array {
                             echo json_encode(['ok' => false, 'error' => 'Logged out due to inactivity']);
                             exit;
                         }
-                        flash('Logged out due to inactivity', 'warn');
-                        redirect('index.php?idle_logout=1');
+                        redirect('index.php?logged_out=idle');
                     }
                 }
 
@@ -285,12 +336,19 @@ function require_role(string $role, bool $allowPasswordChange = false): array {
         deny_access($role, $otherUser['role']);
     }
 
-    // 3. Unauthenticated visitor
+    // 3. Unauthenticated visitor (or a browser whose session was replaced by a newer sign-in)
+    $replaced = !empty($_SESSION['session_replaced']);
     if (is_json_request()) {
         http_response_code(401);
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(['ok' => false, 'error' => 'Logged out due to inactivity']);
+        echo json_encode($replaced
+            ? ['ok' => false, 'error' => 'Your account was signed in on another device.', 'reason' => 'replaced']
+            : ['ok' => false, 'error' => 'Logged out due to inactivity', 'reason' => 'idle']);
         exit;
+    }
+    if ($replaced) {
+        unset($_SESSION['session_replaced']);
+        redirect('index.php?logged_out=replaced');
     }
     redirect(login_url($role));
 }

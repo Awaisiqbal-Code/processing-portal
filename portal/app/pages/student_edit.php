@@ -20,7 +20,7 @@ $errors = [];
 
 // ---------- Counselor Read-Only Security Guard ----------
 if ($isCounselor && is_post()) {
-    $allowedCounselorActions = ['add_remark', 'upload_consent_doc'];
+    $allowedCounselorActions = ['add_remark', 'upload_consent_doc', 'add_comm'];
     if (!in_array(post('action'), $allowedCounselorActions, true)) {
         http_response_code(403);
         flash('Counselors have read-only access to student profile details.', 'bad');
@@ -144,7 +144,7 @@ if (is_post() && post('action') === 'upload_consent_doc') {
         flash('Please choose a valid consent document file (PDF, DOCX, JPG, PNG up to 10MB).', 'bad');
     } else {
         $tplId = (int)post('template_id') ?: null;
-        $res = upload_consent_document($u, $id, $_FILES['consent_doc'], $tplId);
+        $res = upload_consent_document($u, $id, $tplId, $_FILES['consent_doc']);
         if ($res['ok']) {
             flash('Signed consent document uploaded successfully.');
         } else {
@@ -152,6 +152,46 @@ if (is_post() && post('action') === 'upload_consent_doc') {
         }
     }
     redirect($base . "/student.php?id={$id}#consent");
+}
+
+// ---------- Processing journey: update one stage ----------
+if (is_post() && post('action') === 'update_stage') {
+    csrf_check();
+    $res = update_journey_stage($u, $id, post('stage_key'), post('stage_status'), post('stage_date'), (int)post('stage_assigned_to') ?: null, post('stage_notes'), post('stage_post_remark') === '1');
+    flash($res['ok'] ? 'Stage "' . (JOURNEY_STAGES[post('stage_key')][0] ?? '') . '" updated.' . (!empty($res['mirrored']) ? ' Sheet field(s) synced: ' . implode(', ', $res['mirrored']) . '.' : '') : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($base . "/student.php?id={$id}#journey");
+}
+
+// ---------- Assignments: counselor / FE / BE / PMS lead (history kept) ----------
+if (is_post() && post('action') === 'change_assignment') {
+    csrf_check();
+    $new = [];
+    foreach (array_keys(ASSIGNMENT_FIELDS) as $f) {
+        if (array_key_exists($f, $_POST)) $new[$f] = (int)post($f);
+    }
+    $res = change_assignments($u, $id, $new, post('assignment_note') ?: null);
+    flash($res['ok'] ? ($res['changed'] ? 'Assignments updated and recorded in history.' : 'No assignment changed.') : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($base . "/student.php?id={$id}#assignments");
+}
+
+// ---------- Processing status override (Admin / PMS Lead) ----------
+if (is_post() && post('action') === 'set_pstatus') {
+    csrf_check();
+    if (!$canManage) { flash('Only Admin and PMS Lead can set the processing status manually.', 'bad'); redirect($base . "/student.php?id={$id}"); }
+    $ps = post('processing_status');
+    $ps = in_array($ps, PROCESSING_STATUSES, true) ? $ps : null;
+    q('UPDATE students SET processing_status = ? WHERE id = ?', [$ps, $id]);
+    log_activity('student', $id, 'processing_status_set', null, ['processing_status' => $ps ?? 'Automatic'], (int)$u['id']);
+    flash($ps ? "Processing status set to {$ps}." : 'Processing status is automatic again.');
+    redirect($base . "/student.php?id={$id}");
+}
+
+// ---------- Communication history ----------
+if (is_post() && post('action') === 'add_comm') {
+    csrf_check();
+    $res = add_communication($u, $id, post('comm_channel'), post('comm_direction'), post('comm_summary'), post('comm_date') ?: date('Y-m-d'), post('comm_follow_up'));
+    flash($res['ok'] ? 'Communication logged.' : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($base . "/student.php?id={$id}#communication");
 }
 
 // ---------- add university application (Staff only) ----------
@@ -236,6 +276,13 @@ if (is_post() && post('action') === 'save') {
         foreach ($fields as $k => $f) {
             $type = $f[1];
             if ($type === 'officer' || $type === 'readonly_textarea') continue;
+            if ($type === 'counselor') {
+                if (!$isNew && !array_key_exists($k, $_POST)) continue;
+                $cv = trim(mb_substr(post($k), 0, 150));
+                $data[$k] = $cv === '' ? null : $cv;
+                $data['assigned_counselor_id'] = counselor_id_by_name($cv) ?? ($cv === (string)($r['counselor'] ?? '') ? ($r['assigned_counselor_id'] ?? null) : null);
+                continue;
+            }
             if (!$isNew && !array_key_exists($k, $_POST)) continue;
             $v = mb_substr(post($k), 0, $type === 'textarea' ? 5000 : 500);
             if ($type === 'yn' && !in_array($v, ['', 'Yes', 'No'], true)) $v = '';
@@ -313,6 +360,15 @@ if (is_post() && post('action') === 'save') {
             $data['updated_at'] = $now;
             $data['last_edited_at'] = $now;
             $data['last_edited_by'] = (int)$u['id'];
+            // Assignment history for officer / counselor changes made through the sheet form
+            foreach (['frontend_officer_id', 'officer_id', 'assigned_counselor_id'] as $af) {
+                if (array_key_exists($af, $data) && (int)($data[$af] ?? 0) !== (int)($r[$af] ?? 0)) {
+                    $nm = staff_name_map();
+                    $oldNm = $af === 'assigned_counselor_id' ? ($r['counselor'] ?? null) : ($nm[(int)($r[$af] ?? 0)] ?? null);
+                    $newNm = $af === 'assigned_counselor_id' ? ($data['counselor'] ?? null) : ($nm[(int)($data[$af] ?? 0)] ?? null);
+                    record_assignment_change($id, $af, (int)($r[$af] ?? 0) ?: null, $oldNm, (int)($data[$af] ?? 0) ?: null, $newNm, (int)$u['id'], 'Profile form');
+                }
+            }
             $set = implode(', ', array_map(fn($c) => "$c = ?", array_keys($data)));
             [$w, $p] = scope_sql($u, 'students');
             q("UPDATE students SET $set, pending_since = COALESCE(pending_since, ?) WHERE id = ? AND $w", array_merge(array_values($data), [$now, $id], $p));
@@ -519,6 +575,8 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   <?php endif; ?>
 </div>
 
+<?php if (!$isNew) { require APP . '/pages/_student_workspace.php'; } ?>
+
 <?php if (!$isNew): 
     $stStatus = $r['student_status'] ?? 'active';
     $isVerified = ($r['csc_status'] ?? '') === 'Verified' || !empty($r['csc_verified_at']);
@@ -601,7 +659,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 <?php if ($errors): ?><div class="flash bad" role="alert"><?= implode('<br>', array_map('h', $errors)) ?></div><?php endif; ?>
 
 <!-- Main Student Profile Fields Form -->
-<form method="post" enctype="multipart/form-data" class="stack">
+<form method="post" enctype="multipart/form-data" class="stack" id="sheet-details">
   <?= csrf_field() ?>
   <input type="hidden" name="action" value="save">
   <input type="hidden" name="mode" value="<?= $isNew ? 'new' : 'edit' ?>">
@@ -623,6 +681,17 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
               </select>
             <?php else: ?><input value="<?= h($officerMap[(int)$v] ?? 'Not assigned') ?>" disabled><?php endif;
             break;
+        case 'counselor':
+            $cOpts = staff_options()['counselor'];
+            $cNames = array_map(fn($c) => $c['name'], $cOpts); ?>
+              <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?> data-searchable="Search counselor…">
+                <option value="">Not assigned</option>
+                <?php if ($v !== '' && !in_array(strtolower($v), array_map('strtolower', $cNames), true)): ?>
+                  <option value="<?= h($v) ?>" selected><?= h($v) ?> (from old sheet)</option>
+                <?php endif; ?>
+                <?php foreach ($cOpts as $c): ?><option value="<?= h($c['name']) ?>" <?= strcasecmp($v, $c['name']) === 0 ? 'selected' : '' ?>><?= h($c['name']) ?></option><?php endforeach; ?>
+              </select>
+        <?php break;
         case 'yn': ?>
               <select name="<?= $k ?>" <?= $isCounselor ? 'disabled' : '' ?>><?php foreach (['' => 'Not set', 'Yes' => 'Yes', 'No' => 'No'] as $ov => $ol): ?><option value="<?= $ov ?>" <?= $v === $ov ? 'selected' : '' ?>><?= $ol ?></option><?php endforeach; ?></select>
         <?php break;
@@ -647,8 +716,10 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
                 </a>
               <?php endif; ?>
         <?php break;
-        default: ?>
-              <input name="<?= $k ?>" value="<?= h($v) ?>" <?= $k === 'name' ? 'required' : '' ?> <?= $isCounselor ? 'readonly' : '' ?>>
+        default:
+              $sugg = $isCounselor ? [] : field_suggestions($k); ?>
+              <input name="<?= $k ?>" value="<?= h($v) ?>" <?= $k === 'name' ? 'required' : '' ?> <?= $isCounselor ? 'readonly' : '' ?> <?= $sugg ? 'list="dl-' . h($k) . '" autocomplete="off"' : '' ?>>
+              <?php if ($sugg): ?><datalist id="dl-<?= h($k) ?>"><?php foreach ($sugg as $sv): ?><option value="<?= h($sv) ?>"></option><?php endforeach; ?></datalist><?php endif; ?>
       <?php endswitch; ?>
       </label>
     <?php endforeach; ?>
@@ -680,8 +751,48 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   </fieldset>
   <?php endif; ?>
 
-  <fieldset><legend>Documents &amp; Attachments</legend>
-    <p class="muted small">Update document statuses and view, download, or upload verified document files.</p>
+  <fieldset id="documents"><legend>Documents &amp; Attachments</legend>
+    <?php
+      $dsTotal = count(DOCS);
+      $dsCounts = ['Verified' => 0, 'Received' => 0, 'Requested' => 0, 'Pending' => 0, '' => 0];
+      $dsMissing = [];
+      foreach (DOCS as $di => $dn) {
+          $dst = (string)($docs[$di] ?? '');
+          $hasF = !empty($docRows[$di]['file_path']);
+          if (in_array($dst, ['Received', 'Verified'], true) && $hasF) { $dsCounts[$dst]++; }
+          else { $dsCounts[$dst === 'Requested' ? 'Requested' : ($dst === 'Pending' ? 'Pending' : '')]++; if ($di < 9 || $dst !== '') $dsMissing[] = $dn; }
+      }
+      $dsDone = $dsCounts['Verified'] + $dsCounts['Received'];
+      $dsPct = (int)round($dsDone / max(1, $dsTotal) * 100);
+      $dsNote = trim((string)($r['pending_docs_note'] ?? ''));
+      $dsMsg = "Assalam o Alaikum " . ($r['name'] ?? '') . ",\nFor your " . ($r['country'] ?? '') . " file, please share the following documents:\n"
+             . implode("\n", array_map(fn($x) => '• ' . $x, $dsMissing))
+             . (!doc_note_is_empty($dsNote) ? "\n\nAlso pending: " . $dsNote : '')
+             . "\n\nRegards,\n" . $u['name'] . "\nScholarshipHive Edutancy";
+      $dsWa = preg_replace('/\D+/', '', (string)($r['contact_number'] ?? ''));
+      if (str_starts_with($dsWa, '0')) $dsWa = '92' . substr($dsWa, 1);
+    ?>
+    <?php if (!$isNew): ?>
+    <div class="doc-summary">
+      <div class="doc-summary-bar"><i style="width:<?= $dsPct ?>%"></i></div>
+      <div class="doc-summary-row">
+        <b><?= $dsDone ?> / <?= $dsTotal ?> documents in hand</b>
+        <span class="pill sm ok">✓ Verified <?= $dsCounts['Verified'] ?></span>
+        <span class="pill sm acc">Received <?= $dsCounts['Received'] ?></span>
+        <span class="pill sm warn">Requested <?= $dsCounts['Requested'] ?></span>
+        <span class="pill sm bad">Pending <?= $dsCounts['Pending'] + $dsCounts[''] ?></span>
+        <span style="flex:1"></span>
+        <?php if ($dsMissing && !$isCounselor): ?>
+          <button type="button" class="btn sm" data-copy-text="<?= h(str_replace('\n', "
+", $dsMsg)) ?>">📋 Copy document request</button>
+          <?php if (strlen($dsWa) >= 10): ?><a class="btn sm" target="_blank" rel="noopener noreferrer" href="https://wa.me/<?= h($dsWa) ?>?text=<?= rawurlencode(str_replace('\n', "
+", $dsMsg)) ?>">💬 Send on WhatsApp</a><?php endif; ?>
+        <?php endif; ?>
+      </div>
+      <?php if (!doc_note_is_empty($dsNote)): ?><div class="doc-note">📝 <b>Pending documents note:</b> <?= h($dsNote) ?></div><?php endif; ?>
+    </div>
+    <?php endif; ?>
+    <p class="muted small">Update document statuses and view, download, or upload verified document files. Drop a file on a card or click “Choose file”.</p>
     <div class="doc-grid">
     <?php foreach (DOCS as $i => $d): 
       $v = $docs[$i] ?? ''; 
@@ -690,12 +801,12 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
       $fileName = $dRow['file_name'] ?? '';
       $fileKb = round(($dRow['file_size'] ?? 0) / 1024, 1);
     ?>
-      <div class="doc-card">
+      <div class="doc-card ds-<?= h(strtolower($v ?: 'none')) ?><?= $hasFile ? ' has-file' : '' ?>">
         <div>
           <span style="font-weight:600; font-size:0.85rem; display:block;"><?= h($d) ?></span>
           <?php if ($hasFile): ?>
             <div class="doc-attachment-box">
-              <div class="doc-attachment-name">📎 <?= h($fileName) ?> <span class="muted" style="font-size:0.75rem;">(<?= $fileKb ?> KB)</span></div>
+              <div class="doc-attachment-name">📎 <?= h($fileName) ?><?php if ($fileKb > 0): ?> <span class="muted" style="font-size:0.75rem;">(<?= $fileKb ?> KB)</span><?php endif; ?></div>
               <div style="display:flex; gap:0.4rem; align-items:center; margin-top:0.3rem;">
                 <a class="btn sm" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i)) ?>" target="_blank">📄 View</a>
                 <a class="btn sm primary" href="<?= h(url('document.php?id=' . $id . '&doc=' . $i . '&download=1')) ?>">⬇ Download</a>
@@ -710,7 +821,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
           <?php if (!$isCounselor): ?>
           <div style="margin-top: 0.35rem;">
             <label class="small muted" style="display:block; margin-bottom:0.15rem;"><?= $hasFile ? 'Replace File (Max 15MB):' : 'Attach File (PDF, Images, Word):' ?></label>
-            <input type="file" name="doc_file_<?= $i ?>" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.zip" style="font-size:0.75rem;">
+            <label class="dropzone"><input type="file" name="doc_file_<?= $i ?>" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.zip"><span data-dz-label>⬆ Drop file or click to choose</span></label>
           </div>
           <?php endif; ?>
         </div>
@@ -824,7 +935,10 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
                   <input type="hidden" name="id" value="<?= (int)$id ?>">
                   <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
                   <div style="display:flex; gap:0.25rem;">
-                    <input name="app_status" value="<?= h($appSt) ?>" placeholder="Status..." style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
+                    <select name="app_status" style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
+                      <?php if (!in_array($appSt, APPLICATION_STATUSES, true)): ?><option selected><?= h($appSt) ?></option><?php endif; ?>
+                      <?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === $appSt ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?>
+                    </select>
                     <button class="btn sm" type="submit" style="padding:0.15rem 0.45rem; font-size:0.74rem;">Save</button>
                   </div>
                   <input name="app_remarks" value="<?= h($app['remarks'] ?? '') ?>" placeholder="Remarks / notes..." style="font-size:0.75rem; padding:0.18rem 0.4rem;">
@@ -859,12 +973,20 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
       <input type="hidden" name="action" value="add_application">
       <input type="hidden" name="id" value="<?= (int)$id ?>">
       <input type="hidden" name="app_country" value="<?= h($r['country'] ?: 'Italy') ?>">
-      <label class="f"><span>University Name *</span><input name="app_university" required placeholder="e.g. University of Paris-Saclay, TU Dresden, CZU"></label>
-      <label class="f"><span>Program / Course *</span><input name="app_program" placeholder="e.g. MSc Data Science, BSc Economics"></label>
-      <label class="f"><span>Application Track / Type</span><input name="app_type" placeholder="e.g. Campus France, Uni-Assist, Direct"></label>
-      <label class="f"><span>Status</span><input name="app_status" value="Applied" placeholder="Applied / Under Review / Offer Received"></label>
-      <label class="f"><span>Deadline</span><input name="app_deadline" placeholder="e.g. 2026-05-30"></label>
-      <label class="f"><span>Applied Date</span><input name="app_applied_date" placeholder="e.g. 2026-03-15"></label>
+      <label class="f"><span>University Name *</span><input name="app_university" required list="dl-unis" autocomplete="off" placeholder="Start typing — suggestions from the programs directory"></label>
+      <label class="f"><span>Program / Course *</span><input name="app_program" list="dl-progs" autocomplete="off" placeholder="e.g. MSc Data Science, BSc Economics"></label>
+      <?php
+        $uniCountry = (string)($r['country'] ?? '');
+        $uniList = q("SELECT DISTINCT university FROM university_programs WHERE university IS NOT NULL AND university != '' AND (? = '' OR LOWER(country) = LOWER(?)) UNION SELECT DISTINCT university FROM student_applications WHERE university IS NOT NULL AND university != '' AND (? = '' OR LOWER(country) = LOWER(?)) ORDER BY 1 LIMIT 400", [$uniCountry, $uniCountry, $uniCountry, $uniCountry])->fetchAll(PDO::FETCH_COLUMN);
+        $progList = q("SELECT DISTINCT programme FROM university_programs WHERE programme IS NOT NULL AND programme != '' AND (? = '' OR LOWER(country) = LOWER(?)) UNION SELECT DISTINCT program FROM student_applications WHERE program IS NOT NULL AND program != '' AND (? = '' OR LOWER(country) = LOWER(?)) ORDER BY 1 LIMIT 500", [$uniCountry, $uniCountry, $uniCountry, $uniCountry])->fetchAll(PDO::FETCH_COLUMN);
+      ?>
+      <datalist id="dl-unis"><?php foreach ($uniList as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
+      <datalist id="dl-progs"><?php foreach ($progList as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
+      <label class="f"><span>Application Track / Type</span><input name="app_type" list="dl-app-types" placeholder="e.g. Campus France, Uni-Assist, Direct"></label>
+      <datalist id="dl-app-types"><?php foreach (APPLICATION_TYPES as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
+      <label class="f"><span>Status</span><select name="app_status"><?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === 'Applied' ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></label>
+      <label class="f"><span>Deadline</span><input type="date" name="app_deadline"></label>
+      <label class="f"><span>Applied Date</span><input type="date" name="app_applied_date" value="<?= h(date('Y-m-d')) ?>"></label>
       <label class="f"><span>Application Fee</span><input name="app_fee" placeholder="e.g. 60 EUR - Paid"></label>
       <label class="f"><span>Nostrification Status</span><input name="app_nostrification_status" placeholder="e.g. Paid / Waived / Pending"></label>
       <label class="f"><span>Portal URL</span><input name="app_portal_link" placeholder="https://..."></label>
@@ -987,6 +1109,8 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <?php endif; ?>
   </div>
 </section>
+
+<?php require APP . '/pages/_student_comms.php'; ?>
 
 <!-- Phase 2: Append-Only Remarks Timeline & Form -->
 <section class="panel" id="remarks" style="margin-top:1.5rem;">
@@ -1114,8 +1238,9 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   <div class="panel-h"><h2>Student login account</h2><p>Credentials this student uses to access their portal.</p></div>
   <p>Username: <code class="mono"><?= h($login['username']) ?></code> &middot; Status: <span class="pill <?= $login['active'] ? 'ok' : 'bad' ?>"><?= $login['active'] ? 'Active' : 'Disabled' ?></span> &middot; Last sign-in: <?= $login['last_login'] ? h(fmt_date(substr($login['last_login'], 0, 10))) : 'Never' ?></p>
   <form method="post" class="row-actions"><?= csrf_field() ?>
-    <button class="btn sm" formaction="<?= h(url('admin/logins.php')) ?>" name="action" value="reset" name="id" value="<?= $login['id'] ?>">Reset password</button>
-    <button class="btn sm" formaction="<?= h(url('admin/logins.php')) ?>" name="action" value="toggle" name="id" value="<?= $login['id'] ?>"><?= $login['active'] ? 'Disable account' : 'Enable account' ?></button>
+    <input type="hidden" name="student_id" value="<?= (int)$id ?>">
+    <button class="btn sm" formaction="<?= h(url('admin/logins.php')) ?>" name="action" value="reset">Reset password</button>
+    <button class="btn sm" formaction="<?= h(url('admin/logins.php')) ?>" name="action" value="toggle"><?= $login['active'] ? 'Disable account' : 'Enable account' ?></button>
   </form>
 </section>
 <?php endif; ?>

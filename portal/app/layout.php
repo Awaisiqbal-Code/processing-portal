@@ -10,6 +10,7 @@ function nav_items(string $role): array {
             'admin/programs.php'          => 'University Programs',
             'admin/officers.php'          => 'Processing Officers',
             'admin/reports.php'           => 'Reports',
+            'admin/pending_report.php'    => 'Officer Pending Reports',
             'admin/disabled_refunds.php'  => 'Disabled & Refunds',
             'admin/consent_templates.php' => 'Consent Templates',
             'admin/staff.php'             => 'Staff and admins',
@@ -23,6 +24,7 @@ function nav_items(string $role): array {
             'admin/programs.php'          => 'University Programs',
             'admin/officers.php'          => 'Processing Officers',
             'admin/reports.php'           => 'Reports',
+            'admin/pending_report.php'    => 'Officer Pending Reports',
             'admin/disabled_refunds.php'  => 'Disabled & Refunds',
             'admin/consent_templates.php' => 'Consent Templates',
             'admin/staff.php'             => 'Staff and admins',
@@ -34,8 +36,16 @@ function nav_items(string $role): array {
             'officer/students.php'       => 'My students',
             'officer/programs.php'       => 'University Programs',
             'officer/reports.php'        => 'Reports',
+            'officer/pending_report.php' => 'Officer Pending Reports',
         ],
-        'processing_staff', 'officer', 'counselor' => [
+        'processing_staff', 'officer' => [
+            'officer/index.php'          => 'Dashboard',
+            'officer/pending.php'        => 'Pending Tracker',
+            'officer/students.php'       => 'My students',
+            'officer/programs.php'       => 'University Programs',
+            'officer/pending_report.php' => 'My Pending Report',
+        ],
+        'counselor' => [
             'officer/index.php'          => 'Dashboard',
             'officer/pending.php'        => 'Pending Tracker',
             'officer/students.php'       => 'My students',
@@ -44,6 +54,34 @@ function nav_items(string $role): array {
         'student' => ['student/index.php' => 'My file'],
         default   => [],
     };
+}
+
+/** Line icons for the dock (24px grid, stroke = currentColor). */
+function nav_icon(string $href): string {
+    $file = basename(parse_url($href, PHP_URL_PATH) ?: $href, '.php');
+    $p = match ($file) {
+        'index'             => '<rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/>',
+        'pending'           => '<path d="M6 2h12M6 22h12"/><path d="M7 2v4a5 5 0 0 0 10 0V2"/><path d="M7 22v-4a5 5 0 0 1 10 0v4"/>',
+        'students'          => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.2A5 5 0 0 1 21.5 19"/>',
+        'programs'          => '<path d="M3 10 12 4l9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 21h18"/>',
+        'officers'          => '<rect x="3" y="7" width="18" height="13" rx="2.5"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/>',
+        'reports'           => '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+        'pending_report'    => '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/><circle cx="18.5" cy="18.5" r="3" fill="var(--dock-badge-bg)"/><path d="M18.5 17.2v1.4l.9.6"/>',
+        'disabled_refunds'  => '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
+        'consent_templates' => '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/>',
+        'staff'             => '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+        'roles'             => '<path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+        'logins'            => '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l2 2M15 8l2 2"/>',
+        default             => '<circle cx="12" cy="12" r="8"/>',
+    };
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' . $p . '</svg>';
+}
+
+function user_initials(string $name): string {
+    $parts = preg_split('/\s+/', trim($name)) ?: [];
+    $ini = '';
+    foreach (array_slice($parts, 0, 2) as $p) $ini .= mb_strtoupper(mb_substr($p, 0, 1));
+    return $ini ?: '?';
 }
 
 /**
@@ -118,6 +156,7 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
             h(url('ping.php')),
             h(url('index.php?idle_logout=1'))
         );
+        $bodyAttrs .= ' data-has-dock="1"';
     }
     ?><!doctype html>
 <html lang="en"<?= $htmlThemeAttr ?>>
@@ -142,38 +181,53 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
         $roleBadge = role_label($u['role']) . ' · ' . $teamLabel;
     }
 ?>
-<header class="top">
-  <a class="brand" href="<?= h(url(PORTALS[$u['role']]['home'] ?? 'index.php')) ?>" style="text-decoration:none; color:inherit;"><?= brand_lockup_html($portalLabel) ?></a>
-  <nav class="tabs">
-    <?php foreach (nav_items($u['role']) as $href => $label): ?>
-      <a href="<?= h(url($href)) ?>" <?= $self === $href ? 'aria-current="page"' : '' ?>><?= h($label) ?></a>
-    <?php endforeach; ?>
-    <a href="<?= h(url('account/password.php?portal=' . $u['role'])) ?>" <?= $self === 'account/password.php' ? 'aria-current="page"' : '' ?>>Change password</a>
-  </nav>
+<header class="topbar">
+  <a class="brand" href="<?= h(url(PORTALS[$u['role']]['home'] ?? 'index.php')) ?>"><?= brand_lockup_html($portalLabel) ?></a>
+  <div class="topbar-title" aria-hidden="true"><?= h(nav_items($u['role'])[$self] ?? '') ?></div>
   <div class="who">
     <?= theme_toggle_btn() ?>
     <?php if ($isStaff): ?>
-      <div class="notif-bell-container" style="position:relative; display:inline-flex; align-items:center;">
-        <button type="button" id="notif-bell-btn" class="btn sm ghost" aria-label="Notifications" title="Notifications" style="position:relative; padding:0.3rem 0.55rem; font-size:1.05rem; line-height:1;">
-          🔔<span id="notif-badge" class="pill bad" style="display:none; position:absolute; top:-6px; right:-6px; font-size:0.65rem; padding:0.1rem 0.35rem; font-weight:700; border-radius:10px;">0</span>
+      <div class="notif-bell-container">
+        <button type="button" id="notif-bell-btn" class="icon-btn" aria-label="Notifications" title="Notifications">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span id="notif-badge" class="notif-badge" style="display:none;">0</span>
         </button>
-        <div id="notif-dropdown" class="notif-dropdown" data-notif-url="<?= h(url('notifications.php')) ?>" data-student-base="<?= h(url(is_admin_role($u['role']) ? 'admin' : 'officer') . '/student.php?id=') ?>" style="display:none; position:absolute; right:0; top:calc(100% + 8px); width:340px; background:var(--surface); border:1.5px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.18); z-index:1000; overflow:hidden;">
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:0.6rem 0.85rem; border-bottom:1px solid var(--border); background:var(--sunk);">
-            <b style="font-size:0.88rem;">Notifications</b>
-            <button type="button" id="notif-mark-all" class="btn sm" style="font-size:0.72rem; padding:0.15rem 0.45rem;">Mark all read</button>
+        <div id="notif-dropdown" class="notif-dropdown" data-notif-url="<?= h(url('notifications.php')) ?>" data-student-base="<?= h(url(is_admin_role($u['role']) ? 'admin' : 'officer') . '/student.php?id=') ?>" style="display:none;">
+          <div class="notif-head">
+            <b>Notifications</b>
+            <button type="button" id="notif-mark-all" class="btn sm">Mark all read</button>
           </div>
-          <div id="notif-list" style="max-height:360px; overflow-y:auto; padding:0.3rem 0;">
-            <div class="empty" style="padding:1rem; font-size:0.85rem;">No notifications.</div>
+          <div id="notif-list" class="notif-list">
+            <div class="empty">No notifications.</div>
           </div>
         </div>
       </div>
     <?php endif; ?>
-    <span class="role"><?= h($roleBadge) ?></span>
-    <b><?= h($u['name']) ?></b>
-    <a class="btn sm ghost" href="<?= h(url('index.php?switch=1')) ?>">Switch account</a>
-    <form method="post" action="<?= h(url('logout.php')) ?>"><?= csrf_field() ?><input type="hidden" name="role" value="<?= h($u['role']) ?>"><input type="hidden" name="portal" value="<?= h($u['role']) ?>"><button class="btn sm ghost" type="submit">Sign out</button></form>
+    <details class="user-menu">
+      <summary>
+        <span class="avatar"><?= h(user_initials((string)$u['name'])) ?></span>
+        <span class="user-meta"><b><?= h($u['name']) ?></b><small><?= h($roleBadge) ?></small></span>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <div class="user-menu-pop">
+        <div class="user-menu-head"><b><?= h($u['name']) ?></b><span class="role"><?= h($roleBadge) ?></span></div>
+        <a href="<?= h(url('account/password.php?portal=' . $u['role'])) ?>">Change password</a>
+        <a href="<?= h(url('index.php?switch=1')) ?>">Switch account</a>
+        <form method="post" action="<?= h(url('logout.php')) ?>"><?= csrf_field() ?><input type="hidden" name="role" value="<?= h($u['role']) ?>"><input type="hidden" name="portal" value="<?= h($u['role']) ?>"><button type="submit">Sign out</button></form>
+      </div>
+    </details>
   </div>
 </header>
+<nav class="dock" id="app-dock" aria-label="Main navigation">
+  <div class="dock-inner">
+    <?php foreach (nav_items($u['role']) as $href => $label): ?>
+      <a class="dock-item" href="<?= h(url($href)) ?>" <?= $self === $href ? 'aria-current="page"' : '' ?> aria-label="<?= h($label) ?>">
+        <span class="dock-icon"><?= nav_icon($href) ?></span>
+        <span class="dock-label"><?= h($label) ?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+</nav>
 <?php if ($isStaff): ?>
 <div id="idle-warning-modal" class="idle-modal-backdrop" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="idle-modal-title">
   <div class="idle-modal-card">

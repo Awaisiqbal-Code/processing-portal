@@ -18,11 +18,29 @@ function csrf_token(): string {
     return $_SESSION['csrf'];
 }
 function csrf_field(): string { return '<input type="hidden" name="_csrf" value="' . h(csrf_token()) . '">'; }
+function verify_csrf(?string $t): bool {
+    return is_string($t) && $t !== '' && !empty($_SESSION['csrf']) && hash_equals((string)$_SESSION['csrf'], $t);
+}
 function csrf_check(): void {
-    $t = $_POST['_csrf'] ?? '';
-    if (!is_string($t) || empty($_SESSION['csrf']) || !hash_equals($_SESSION['csrf'], $t)) {
+    $t = $_POST['_csrf'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    if (!verify_csrf(is_string($t) ? $t : '')) {
+        // Session gone (idle sign-out / signed in elsewhere): send the person to sign in, not to a dead end.
+        if (empty($_SESSION['auth'])) {
+            $reason = !empty($_SESSION['session_replaced']) ? 'replaced' : 'idle';
+            if (function_exists('is_json_request') && is_json_request()) {
+                http_response_code(401);
+                header('Content-Type: application/json; charset=utf-8');
+                exit(json_encode(['ok' => false, 'reason' => $reason, 'error' => 'Your session ended. Please sign in again.']));
+            }
+            redirect('index.php?logged_out=' . $reason);
+        }
         http_response_code(400);
-        exit('This form expired. Go back, reload the page and try again.');
+        header('Content-Type: text/html; charset=utf-8');
+        $back = h($_SERVER['HTTP_REFERER'] ?? url('index.php'));
+        exit('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page refreshed</title>'
+           . '<link rel="stylesheet" href="' . h(url('assets/style.css')) . '"><body><main style="max-width:520px;margin:12vh auto"><section class="panel">'
+           . '<h1>This page was refreshed for security</h1><p class="muted">The form was open for a long time, so its security token expired. Nothing was saved. '
+           . 'Go back, reload the page and submit again.</p><p style="margin-top:14px"><a class="btn primary" href="' . $back . '">← Go back and reload</a></p></section></main></body>');
     }
 }
 function is_post(): bool { return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'; }
@@ -50,7 +68,8 @@ function safe_link(?string $u): ?string {
 
 function time_ago(?string $ts): string {
     if (!$ts) return '';
-    $t = strtotime($ts . (str_ends_with($ts, 'Z') ? '' : ' UTC'));
+    // Timestamps are written by now() in the app timezone (Asia/Karachi), so parse them in that same timezone.
+    $t = strtotime($ts);
     if (!$t) return $ts;
     $diff = time() - $t;
     if ($diff < 60) return 'just now';

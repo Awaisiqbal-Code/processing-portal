@@ -11,6 +11,11 @@ if (!in_array($u['role'], ['pms_lead', 'super_admin', 'admin'], true)) {
     echo "Access denied. Only PMS Leads and System Administrators can view reporting metrics.";
     exit;
 }
+if (get('tab') === 'overview') {
+    $reportsUrl = url('officer/reports.php');
+    require APP . '/pages/processing_overview.php';
+    exit;
+}
 
 $today = date('Y-m-d');
 $preset = get('preset') ?: '';
@@ -67,6 +72,8 @@ page_start('Operations & Caseload Report', $u, PORTALS[$u['role']]['label'] ?? '
   <div class="row-actions">
     <a class="btn sm primary" href="<?= h(url('officer/reports.php?start_date=' . urlencode($startDate) . '&end_date=' . urlencode($endDate) . '&download=xlsx')) ?>">⬇ Export Excel (.xlsx)</a>
     <a class="btn sm ghost" href="<?= h(url('officer/reports.php?start_date=' . urlencode($startDate) . '&end_date=' . urlencode($endDate) . '&download=pdf')) ?>" target="_blank">⬇ Export PDF (.pdf)</a>
+    <a class="btn sm ghost" href="<?= h(url('officer/reports.php?tab=overview')) ?>">Processing Overview</a>
+    <a class="btn sm ghost" href="<?= h(url('officer/pending_report.php')) ?>">Officer Pending Reports</a>
   </div>
 </div>
 

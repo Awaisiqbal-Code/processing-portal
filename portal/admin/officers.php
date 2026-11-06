@@ -379,7 +379,6 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
           <tr>
             <th>SR#</th>
             <th>Student Name</th>
-            <th>Counselor</th>
             <th><?= $isFeOfficer ? 'Back End Officer' : 'Front End Officer' ?></th>
             <th>Branch & Intake</th>
             <th>Docs & Meeting</th>
@@ -411,8 +410,8 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
               <?php if (!empty($r['portal_id'])): ?>
                 <div class="small muted" style="font-size:0.75rem;">ID: <?= h($r['portal_id']) ?></div>
               <?php endif; ?>
+              <?php if (!empty($r['counselor'])): ?><div class="small muted" style="font-size:0.72rem;">Counselor: <?= h($r['counselor']) ?></div><?php endif; ?>
             </td>
-            <td><?= h($r['counselor'] ?: '-') ?></td>
             <td>
               <?php if ($counterpartId): ?>
                 <a href="<?= h(url('admin/officers.php?id=' . $counterpartId)) ?>" class="pill" style="text-decoration:none;"><?= h($counterpartName) ?></a>

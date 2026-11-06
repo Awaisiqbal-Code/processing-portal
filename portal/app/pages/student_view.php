@@ -374,9 +374,9 @@ if ($preview): ?>
       <div class="panel-h"><h2>Your team &amp; Academic Profile</h2></div>
       <div class="list">
         <div class="li"><span>Destination Country</span><b><?= h($r['country'] ?: 'Italy') ?> <?= !empty($r['program_level']) ? '(' . h($r['program_level']) . ')' : '' ?></b></div>
-        <div class="li"><span>Counselor</span><b><?= h($r['counselor'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Front-End Officer</span><b><?= h($r['frontend_officer_name'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Back-End Officer</span><b><?= h($r['officer_name'] ?: 'Not assigned') ?></b></div>
+        <div class="li"><span>Counselor</span><b><?= h($r['counselor'] ?: 'Not assigned') ?></b></div>
         <div class="li"><span>Branch</span><b><?= h($r['branch']) ?></b></div>
         <div class="li"><span>Intake</span><b><?= h($r['intake']) ?></b></div>
         <?php if (!empty($r['last_degree'])): ?><div class="li"><span>Last Degree</span><b><?= h($r['last_degree']) ?></b></div><?php endif; ?>

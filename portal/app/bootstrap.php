@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-if (!ob_get_level()) {
+// Always open our own (unlimited) output buffer. Hosts often run with output_buffering=4096, which
+// flushes headers part-way through a page — the session cookie then never updates and flash
+// messages ("Student saved.") kept re-appearing on every page.
+if (PHP_SAPI !== 'cli') {
     ob_start();
 }
 
@@ -90,6 +93,8 @@ session_set_cookie_params([
     'samesite' => 'Lax',
 ]);
 ini_set('session.use_strict_mode', '1');
+// Keep server-side session files at least as long as the staff idle timeout (some hosts default to 24 min)
+ini_set('session.gc_maxlifetime', '14400');
 ini_set('session.use_only_cookies', '1');
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -102,7 +107,9 @@ if (!empty($_COOKIE['PTPSESSDATA'])) {
     $parts = explode('.', (string)$_COOKIE['PTPSESSDATA'], 2);
     if (count($parts) === 2 && hash_equals(hash_hmac('sha256', $parts[0], PTP_COOKIE_SECRET), $parts[1])) {
         $decoded = json_decode((string)base64_decode($parts[0], true), true);
-        if (is_array($decoded)) {
+        // Only fall back to the signed cookie when the server-side session is empty (serverless cold start).
+        $nativeSessionAlive = !empty($_SESSION['csrf']) || !empty($_SESSION['auth']);
+        if (is_array($decoded) && !$nativeSessionAlive) {
             foreach (['auth', 'last_login_role', 'csrf', 'flash', 'last', 'staff_last_active'] as $k) {
                 if (empty($_SESSION[$k]) && isset($decoded[$k])) {
                     $_SESSION[$k] = $decoded[$k];
@@ -153,3 +160,22 @@ require APP . '/helpers.php';
 require APP . '/stages.php';
 require APP . '/auth.php';
 require APP . '/services.php';
+require APP . '/workflow.php';
+
+// Apply pending additive schema migrations automatically (once) so a plain `php -S` run works too.
+if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
+    try {
+        $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
+            && q("SELECT 1 FROM schema_migrations WHERE version = '007_sessions_journey_assignments'")->fetchColumn();
+        if (!$hasMig) {
+            require_once APP . '/migrate.php';
+            ob_start();
+            run_migrations(false);
+            ob_end_clean();
+            $GLOBALS['MIGRATION_RUNNING'] = false;
+        }
+    } catch (Throwable $e) {
+        if (ob_get_level() > 1) { @ob_end_clean(); }
+        error_log('Auto-migration failed: ' . $e->getMessage());
+    }
+}

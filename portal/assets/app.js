@@ -187,7 +187,7 @@
           headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
         }).then(function (res) {
           if (res.status === 401) {
-            triggerIdleLogout(false);
+            res.json().then(function (j) { handleSessionEnd(j && j.reason); }).catch(function () { triggerIdleLogout(false); });
           }
         }).catch(function () {});
       } catch (e) {}
@@ -212,13 +212,40 @@
       }
     }
 
+    // Session ended on the server (signed in elsewhere, or expired): go to the sign-in page with the right message.
+    function handleSessionEnd(reason) {
+      if (isLoggingOut) return;
+      isLoggingOut = true;
+      var base = logoutUrl.split('index.php')[0];
+      window.location.href = base + 'index.php?logged_out=' + (reason === 'replaced' ? 'replaced' : 'idle');
+    }
+
+    // Background check every 25s: detects "signed in on another device" quickly, without extending the idle timer.
+    setInterval(function () {
+      if (isLoggingOut || document.hidden) return;
+      fetch(pingUrl + '?check=1', {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-Background-Poll': '1' }
+      }).then(function (res) {
+        if (res.status === 401) {
+          res.json().then(function (j) { handleSessionEnd(j && j.reason); }).catch(function () { handleSessionEnd('idle'); });
+        }
+      }).catch(function () {});
+    }, 25000);
+
     function triggerIdleLogout(fromRemoteTab) {
       if (isLoggingOut) return;
       isLoggingOut = true;
       if (!fromRemoteTab) {
         broadcastLogout();
       }
-      window.location.href = logoutUrl;
+      // Come back to the same page after signing in again
+      var basePath = logoutUrl.split('index.php')[0];
+      var rel = window.location.pathname;
+      if (basePath && rel.indexOf(basePath) === 0) rel = rel.substring(basePath.length);
+      rel = rel.replace(/^\/+/, '') + window.location.search;
+      var sep = logoutUrl.indexOf('?') === -1 ? '?' : '&';
+      window.location.href = /^(admin|officer)\//.test(rel) ? logoutUrl + sep + 'next=' + encodeURIComponent(rel) : logoutUrl;
     }
 
     // Initialize shared timestamp
@@ -653,7 +680,177 @@
     }
   }
 
+  // =========================================================================
+  // macOS-style dock: magnifies under the pointer, hides while scrolling,
+  // comes back as soon as scrolling stops (or the pointer nears the bottom).
+  // =========================================================================
+  function initDock() {
+    var dock = document.getElementById('app-dock');
+    if (!dock) return;
+    var items = Array.prototype.slice.call(dock.querySelectorAll('.dock-item'));
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var wide = function () { return window.innerWidth > 760; };
+
+    if (!reduce) {
+      dock.addEventListener('mousemove', function (e) {
+        if (!wide()) return;
+        for (var i = 0; i < items.length; i++) {
+          var r = items[i].getBoundingClientRect();
+          var cx = r.left + r.width / 2;
+          var d = Math.abs(e.clientX - cx);
+          var s = 1 + 0.42 * Math.max(0, 1 - d / 130);
+          items[i].style.setProperty('--s', s.toFixed(3));
+        }
+      });
+      dock.addEventListener('mouseleave', function () {
+        for (var i = 0; i < items.length; i++) items[i].style.setProperty('--s', '1');
+      });
+    }
+
+    var timer = null;
+    var lastY = window.scrollY;
+    var pointerNearBottom = false;
+    function show() { dock.classList.remove('is-hidden'); }
+    window.addEventListener('scroll', function () {
+      var y = window.scrollY;
+      if (Math.abs(y - lastY) > 4 && !pointerNearBottom && !dock.matches(':hover')) {
+        dock.classList.add('is-hidden');
+      }
+      lastY = y;
+      clearTimeout(timer);
+      timer = setTimeout(show, 420);
+    }, { passive: true });
+    document.addEventListener('mousemove', function (e) {
+      pointerNearBottom = (window.innerHeight - e.clientY) < 90;
+      if (pointerNearBottom) show();
+    }, { passive: true });
+    dock.addEventListener('focusin', show);
+  }
+
+  function initUserMenu() {
+    var menus = document.querySelectorAll('details.user-menu');
+    if (!menus.length) return;
+    document.addEventListener('click', function (e) {
+      for (var i = 0; i < menus.length; i++) {
+        if (menus[i].open && !menus[i].contains(e.target)) menus[i].open = false;
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') for (var i = 0; i < menus.length; i++) menus[i].open = false;
+    });
+  }
+
+  // Searchable dropdowns: <select data-searchable="placeholder"> gets a small filter box above it
+  function initSearchableSelects(root) {
+    var sels = (root || document).querySelectorAll('select[data-searchable]:not([data-ss-ready])');
+    for (var i = 0; i < sels.length; i++) {
+      (function (sel) {
+        sel.setAttribute('data-ss-ready', '1');
+        if (sel.options.length < 7) return;
+        var box = document.createElement('input');
+        box.type = 'search';
+        box.className = 'ss-filter';
+        box.placeholder = sel.getAttribute('data-searchable') || 'Search…';
+        box.setAttribute('aria-label', box.placeholder);
+        sel.parentNode.insertBefore(box, sel);
+        box.addEventListener('input', function () {
+          var q = box.value.toLowerCase().trim();
+          var firstMatch = null;
+          for (var k = 0; k < sel.options.length; k++) {
+            var o = sel.options[k];
+            if (!o.value) { o.hidden = false; continue; }
+            var hit = !q || o.text.toLowerCase().indexOf(q) !== -1;
+            o.hidden = !hit;
+            if (hit && !firstMatch) firstMatch = o;
+          }
+          if (q && firstMatch && (sel.selectedIndex < 0 || sel.options[sel.selectedIndex].hidden || !sel.value)) {
+            sel.value = firstMatch.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        });
+        box.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sel.focus(); } });
+      })(sels[i]);
+    }
+  }
+
+  function initQuickAdd() {
+    var modal = document.getElementById('quick-add-modal');
+    if (!modal) return;
+    function open() { modal.hidden = false; var f = modal.querySelector('input[name=name]'); if (f) setTimeout(function () { f.focus(); }, 60); }
+    function close() { modal.hidden = true; }
+    document.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('[data-qa-open]')) { e.preventDefault(); open(); }
+      else if (e.target.closest && e.target.closest('[data-qa-close]')) { e.preventDefault(); close(); }
+      else if (e.target === modal) close();
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !modal.hidden) close(); });
+    // Suggest the back-end officer who already handles that country (admin / PMS lead only)
+    var suggest = {};
+    try { suggest = JSON.parse(modal.getAttribute('data-suggest') || '{}'); } catch (e) {}
+    var country = modal.querySelector('[data-qa-country]');
+    var be = modal.querySelector('[data-qa-backend]');
+    var hint = modal.querySelector('[data-qa-hint]');
+    if (country && be) {
+      country.addEventListener('change', function () {
+        var sid = suggest[country.value];
+        if (sid && !be.value) {
+          be.value = String(sid);
+          if (hint) hint.textContent = 'Suggested: handles most ' + country.value + ' students';
+        }
+      });
+    }
+    if (!modal.hidden) open();
+  }
+
+  function initViewMemory() {
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest ? e.target.closest('[data-remember-view]') : null;
+      if (a) { try { document.cookie = 'ptp_students_view=' + a.getAttribute('data-remember-view') + '; path=/; max-age=31536000; SameSite=Lax'; } catch (er) {} }
+    });
+  }
+
+  function initDropzones() {
+    var zones = document.querySelectorAll('.dropzone');
+    for (var i = 0; i < zones.length; i++) {
+      (function (z) {
+        var input = z.querySelector('input[type=file]');
+        var label = z.querySelector('[data-dz-label]');
+        if (!input) return;
+        var original = label ? label.textContent : '';
+        input.addEventListener('change', function () {
+          var f = input.files && input.files[0];
+          z.classList.toggle('has-file', !!f);
+          if (label) label.textContent = f ? '✓ ' + f.name + ' (' + Math.max(1, Math.round(f.size / 1024)) + ' KB) — will upload on save' : original;
+        });
+        ['dragenter', 'dragover'].forEach(function (ev) { z.addEventListener(ev, function () { z.classList.add('is-over'); }); });
+        ['dragleave', 'drop'].forEach(function (ev) { z.addEventListener(ev, function () { z.classList.remove('is-over'); }); });
+      })(zones[i]);
+    }
+  }
+
+  function initCopyButtons() {
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-copy-text]') : null;
+      if (!b) return;
+      e.preventDefault();
+      var txt = b.getAttribute('data-copy-text') || '';
+      var done = function () { var o = b.textContent; b.textContent = '✓ Copied'; setTimeout(function () { b.textContent = o; }, 1600); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done).catch(function () { window.prompt('Copy this text:', txt); });
+      } else {
+        window.prompt('Copy this text:', txt);
+      }
+    });
+  }
+
   function initApp() {
+    initDropzones();
+    initCopyButtons();
+    initSearchableSelects();
+    initQuickAdd();
+    initViewMemory();
+    initDock();
+    initUserMenu();
     initStaffIdleTimer();
     initNotificationBell();
     initRemarksModal();

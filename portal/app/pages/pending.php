@@ -67,89 +67,7 @@ foreach (q("SELECT student_id, COUNT(*) AS cnt FROM student_applications GROUP B
     $appCountsByStudent[(int)$ar['student_id']] = (int)$ar['cnt'];
 }
 
-// Helper to evaluate all pending categories for a student
-function evaluate_student_pending(array $r, array $docStats, int $appCount): array {
-    $country = trim((string)($r['country'] ?? 'Italy')) ?: 'Italy';
-    $isItaly = strtolower($country) === 'italy';
-    $level = strtoupper(trim((string)($r['program_level'] ?? 'MS')));
-
-    // If BS student, Bachelor degree (doc_index 4) is not required
-    $missingCore = $docStats['missing_core'] ?? [0 => 'Passport', 1 => 'CNIC', 2 => 'Matric', 3 => 'Inter', 5 => 'IELTS/Language', 6 => 'CV'];
-    if ($level === 'BS') {
-        unset($missingCore[4]);
-    }
-
-    $noteRaw = trim((string)($r['pending_docs_note'] ?? ''));
-    $hasPendingNote = ($noteRaw !== '' && !in_array(strtolower($noteRaw), ['n/a', 'none', 'nil', 'complete', 'completed', 'all complete', 'done', '-'], true));
-    $checklistDone = ($r['docs_checklist'] ?? '') === 'Yes';
-    $receivedDocs = (int)($docStats['received'] ?? 0);
-    $pendingDocsCount = (int)($docStats['pending'] ?? 12);
-
-    // 1. Pending Documents: pending if checklist not marked 'Yes', or if an explicit pending note exists
-    $isDocsPending = (!$checklistDone || $hasPendingNote);
-
-    // 2. Pending Consent
-    $isConsentPending = ($r['consent'] ?? '') !== 'Yes';
-
-    // 3. Pending Initial Meeting / Recording
-    $isFirstMeetingPending = ($r['initial_meeting'] ?? '') !== 'Yes';
-    $isRecordingPending = $isItaly && (($r['recorded_uploaded'] ?? '') !== 'Yes' && empty($r['meeting_link']));
-    $isMeetingsPending = $isFirstMeetingPending || $isRecordingPending;
-
-    // 4. Pending 2nd Meeting / Tax Meeting (primarily Italy)
-    $isTaxPending = $isItaly && (($r['tax_meeting'] ?? '') !== 'Yes');
-    $isSecondMeetingPending = $isItaly && (($r['second_meeting'] ?? '') !== 'Yes');
-    $isSecondTaxPending = $isTaxPending || $isSecondMeetingPending;
-
-    // 5. Pending Shortlisting / University Applications
-    $shortRaw = strtolower(trim((string)($r['shortlisting'] ?? '')));
-    $shortDone = ($shortRaw !== '' && !str_contains($shortRaw, 'pending') && $shortRaw !== 'no') || $appCount > 0;
-    $isShortlistingPending = !$shortDone;
-
-    // 6. Pending Portal / Email Credentials
-    $isCredentialsPending = empty(trim((string)($r['email'] ?? ''))) || empty(trim((string)($r['portal_id'] ?? '')));
-
-    // 7. Pending Staff Action / Remark
-    $isRemarkPending = !empty($r['pending_since']) || empty(trim((string)($r['remarks'] ?? '')));
-
-    $pendingItems = [];
-    if ($isConsentPending)       $pendingItems[] = 'Consent Form';
-    if (!$checklistDone)         $pendingItems[] = 'Docs Checklist';
-    if ($hasPendingNote)         $pendingItems[] = 'Pending Docs Note';
-    if ($isFirstMeetingPending)  $pendingItems[] = '1st Meeting';
-    if ($isRecordingPending)     $pendingItems[] = 'Meeting Recording';
-    if ($isTaxPending)           $pendingItems[] = 'Tax Meeting';
-    if ($isSecondMeetingPending) $pendingItems[] = '2nd Meeting';
-    if ($isShortlistingPending)  $pendingItems[] = 'Shortlisting / Uni Apps';
-    if ($isCredentialsPending)   $pendingItems[] = 'Portal / Email ID';
-    if (!empty($r['pending_since'])) $pendingItems[] = '48h Staff Remark Due';
-
-    $hasAnyPending = !empty($pendingItems);
-
-    return [
-        'any'               => $hasAnyPending,
-        'docs'              => $isDocsPending,
-        'checklist_open'    => !$checklistDone,
-        'has_doc_note'      => $hasPendingNote,
-        'doc_note'          => $hasPendingNote ? $noteRaw : '',
-        'received_docs'     => $receivedDocs,
-        'pending_docs_cnt'  => $isDocsPending ? $pendingDocsCount : 0,
-        'missing_core'      => $isDocsPending ? array_values($missingCore) : [],
-        'consent'           => $isConsentPending,
-        'meetings'          => $isMeetingsPending,
-        'first_meeting'     => $isFirstMeetingPending,
-        'recording'         => $isRecordingPending,
-        'second_tax'        => $isSecondTaxPending,
-        'tax_meeting'       => $isTaxPending,
-        'second_meeting'    => $isSecondMeetingPending,
-        'shortlisting'      => $isShortlistingPending,
-        'credentials'       => $isCredentialsPending,
-        'remarks'           => $isRemarkPending,
-        'pending_timer'     => !empty($r['pending_since']),
-        'items'             => $pendingItems,
-        'app_count'         => $appCount,
-    ];
-}
+// evaluate_student_pending() now lives in app/workflow.php (shared with Officer Pending Reports)
 
 // Compute pending analysis for all students in scope
 $enriched = [];
@@ -706,12 +624,13 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
   <?php if (empty($filteredStudents)): ?>
     <div class="empty">No students match the selected pending filter criteria.</div>
   <?php else: ?>
-    <div class="tbl"><table>
+    <div class="tbl tbl-pending"><table>
+      <colgroup><col style="width:52px"><col style="width:180px"><col style="width:160px"><col style="width:200px"><col style="width:280px"><col style="width:220px"><col style="width:118px"></colgroup>
       <thead>
         <tr>
           <th style="width:50px;">SR#</th>
           <th>Student &amp; Country</th>
-          <th>Assigned Team (BE / FE / Counselor)</th>
+          <th>Processing Officers</th>
           <th>What Stages Are Pending?</th>
           <th>What Documents Are Pending? (Sheet Note &amp; Drive Files)</th>
           <th>Last Remarks (Click Dots)</th>
@@ -740,14 +659,12 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
               </div>
             </td>
             <td class="small">
-              <div><span class="muted">BE Officer:</span> <b><?= h($r['officer_name'] ?? 'Unassigned') ?></b></div>
-              <?php if (!empty($r['frontend_officer_name']) || !empty($r['fe_user_name'])): ?>
-                <div><span class="muted">FE Officer:</span> <b><?= h($r['frontend_officer_name'] ?: $r['fe_user_name']) ?></b></div>
-              <?php endif; ?>
-              <div><span class="muted">Counselor:</span> <b><?= h($r['counselor'] ?: 'Unassigned') ?></b></div>
+              <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: 'Not set') ?></b></div>
+              <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?? 'Unassigned') ?></b></div>
+              <?php if (!empty($r['counselor'])): ?><div class="muted" style="font-size:11.5px; margin-top:2px;">Counselor: <?= h($r['counselor']) ?></div><?php endif; ?>
             </td>
             <td>
-              <div style="display:flex; gap:0.25rem; flex-wrap:wrap; max-width:290px;">
+              <div style="display:flex; gap:0.25rem; flex-wrap:wrap;">
                 <?php foreach ($p['items'] as $itemLabel):
                     $pillClass = (str_contains($itemLabel, 'Docs') || str_contains($itemLabel, '48h')) ? 'bad' : 'warn';
                 ?>
@@ -758,10 +675,10 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
                 <?php endif; ?>
               </div>
             </td>
-            <td style="max-width:340px;">
+            <td>
               <?php if ($p['has_doc_note']): ?>
-                <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.35); border-radius:6px; padding:0.35rem 0.55rem; font-size:0.78rem; margin-bottom:0.35rem;">
-                  <b style="color:var(--bad, #ef4444);">Sheet Pending Note:</b> <?= h($p['doc_note']) ?>
+                <div class="pend-note" title="<?= h($p['doc_note']) ?>">
+                  <b>Sheet Pending Note:</b> <span class="pend-note-text"><?= h($p['doc_note']) ?></span>
                 </div>
               <?php endif; ?>
               <div class="small">
@@ -777,11 +694,11 @@ page_start('Pending Items & Workload Breakdown', $u, PORTALS[$u['role']]['label'
                 <?php endif; ?>
               </div>
             </td>
-            <td class="small" style="max-width:260px;">
+            <td class="small">
               <?= last_remarks_cell($r) ?>
             </td>
-            <td style="text-align:right; white-space:nowrap;">
-              <div style="display:flex; gap:0.3rem; justify-content:flex-end; align-items:center;">
+            <td style="text-align:right;">
+              <div class="pend-actions">
                 <?php if ($dLink): ?>
                   <a class="btn sm" href="<?= h($dLink) ?>" target="_blank" rel="noopener noreferrer" title="Open Google Drive Folder">📁 Drive</a>
                 <?php endif; ?>
