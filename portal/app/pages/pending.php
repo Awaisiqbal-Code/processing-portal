@@ -4,6 +4,19 @@ declare(strict_types=1);
 // Expects $u.
 
 [$w, $p] = scope_sql($u);
+
+// ---------- fix an item right here (same fields as the profile) ----------
+if (is_post() && post('action') === 'quick') {
+    csrf_check();
+    $qsid = (int)post('sid');
+    $qr = q("SELECT s.* FROM students s WHERE s.id = ? AND $w", array_merge([$qsid], $p))->fetch();
+    $back = (string)post('back');
+    if (!preg_match('#^(admin|officer)/pending\.php(\?[^#]*)?$#', $back)) $back = (is_admin_role($u['role']) ? 'admin' : 'officer') . '/pending.php';
+    if (!$qr) { flash('Student not found.', 'bad'); redirect($back . '#list'); }
+    $res = pending_quick_action($u, $qr, (string)post('act'), $_POST, $_FILES);
+    flash($res['ok'] ? $res['message'] : $res['error'], $res['ok'] ? 'ok' : 'bad');
+    redirect($back . '#list');
+}
 $admin = is_admin_role($u['role']);
 $isLead = $admin || $u['role'] === 'pms_lead';
 $base = $admin ? 'admin' : 'officer';
@@ -65,8 +78,10 @@ $fOfficer = (int)get('officer');
 $fLevel = strtoupper(get('program_level'));
 $fDoc = get('doc');
 $fq = get('q');
-$list = array_values(array_filter($rows, function ($r) use ($cat, $fCountry, $fOfficer, $fLevel, $fDoc, $fq) {
+$fSid = (int)get('sid');
+$list = array_values(array_filter($rows, function ($r) use ($cat, $fCountry, $fOfficer, $fLevel, $fDoc, $fq, $fSid) {
     $pi = $r['_p'];
+    if ($fSid && (int)$r['id'] !== $fSid) return false;
     if ($cat === 'all' ? !$pi['any'] : !$pi[$cat]) return false;
     if ($fCountry !== '' && strcasecmp(trim((string)$r['country']) ?: 'Not set', $fCountry) !== 0) return false;
     if ($fOfficer && (int)$r['officer_id'] !== $fOfficer && (int)$r['frontend_officer_id'] !== $fOfficer) return false;
@@ -78,7 +93,7 @@ $list = array_values(array_filter($rows, function ($r) use ($cat, $fCountry, $fO
 usort($list, fn($a, $b) => [count($b['_p']['task_keys']), $b['_p']['docs_count']] <=> [count($a['_p']['task_keys']), $a['_p']['docs_count']]);
 
 function pending_url(string $base, array $over = []): string {
-    $params = array_merge(['cat' => get('cat') ?: 'all', 'country' => get('country'), 'officer' => get('officer'), 'program_level' => get('program_level'), 'doc' => get('doc'), 'q' => get('q')], $over);
+    $params = array_merge(['cat' => get('cat') ?: 'all', 'country' => get('country'), 'officer' => get('officer'), 'program_level' => get('program_level'), 'doc' => get('doc'), 'q' => get('q'), 'sid' => get('sid'), 'by' => get('by')], $over);
     $params = array_filter($params, fn($v) => $v !== '' && $v !== null && $v !== 'all' && $v !== 0 && $v !== '0');
     return url($base . '/pending.php' . ($params ? '?' . http_build_query($params) : ''));
 }
@@ -178,9 +193,39 @@ page_start('Pending Tracker', $u, PORTALS[$u['role']]['label']);
   </section>
 </div>
 
+
+<?php
+// ---------- the list: one item at a time, grouped by officer, fixable in place ----------
+$feCats = ['docs', 'consent', 'first_meeting', 'recording'];
+$groupBy = in_array(get('by'), ['fe', 'be'], true) ? get('by') : (in_array($cat, $feCats, true) ? 'fe' : 'be');
+$officerName = function (array $r, string $side): string {
+    return $side === 'fe' ? (($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: '') : ($r['officer_name'] ?: '');
+};
+$groups = [];
+foreach ($list as $r) {
+    $gname = $officerName($r, $groupBy) ?: ($officerName($r, $groupBy === 'fe' ? 'be' : 'fe') ?: 'No officer assigned');
+    $groups[$gname][] = $r;
+}
+uksort($groups, fn($a, $b) => [$a === 'No officer assigned', -count($groups[$a])] <=> [$b === 'No officer assigned', -count($groups[$b])]);
+$backUrl = ltrim(substr(pending_url($base), strlen(url(''))), '/');
+$uniList = $cat === 'shortlisting' ? array_column(q("SELECT DISTINCT university FROM student_applications WHERE TRIM(COALESCE(university,'')) != '' ORDER BY university COLLATE NOCASE LIMIT 400")->fetchAll(), 'university') : [];
+$MAX_ROWS = 250; $shown = 0;
+$qa = function (string $act, int $sid, string $inner, bool $multipart = false) use ($backUrl): string {
+    return '<form method="post" class="qa-form"' . ($multipart ? ' enctype="multipart/form-data"' : '') . '>' . csrf_field()
+         . '<input type="hidden" name="action" value="quick"><input type="hidden" name="act" value="' . h($act) . '"><input type="hidden" name="sid" value="' . $sid . '"><input type="hidden" name="back" value="' . h($backUrl) . '">'
+         . $inner . '</form>';
+};
+?>
 <section class="panel" id="list">
   <div class="panel-h">
-    <div><h2><?= h($CATS[$cat]) ?> — <?= count($list) ?> student<?= count($list) === 1 ? '' : 's' ?></h2><p>Most open items first. Click a document to open the student's Documents section.</p></div>
+    <div><h2><?= h($CATS[$cat]) ?> — <?= count($list) ?> student<?= count($list) === 1 ? '' : 's' ?></h2>
+      <p><?= $cat === 'all' ? 'Click an open item to work on just that item for that student.' : 'Only what is missing for each student. Fix it right here — it saves to the student’s profile, and the row disappears once done.' ?></p></div>
+    <?php if ($cat !== 'all'): ?>
+      <div class="seg seg-sm no-print" aria-label="Group by">
+        <a class="<?= $groupBy === 'fe' ? 'on' : '' ?>" href="<?= h(pending_url($base, ['by' => 'fe']) . '#list') ?>">By front-end officer</a>
+        <a class="<?= $groupBy === 'be' ? 'on' : '' ?>" href="<?= h(pending_url($base, ['by' => 'be']) . '#list') ?>">By back-end officer</a>
+      </div>
+    <?php endif; ?>
   </div>
   <form method="get" class="toolbar" action="<?= h(url($base . '/pending.php')) ?>#list">
     <select name="cat" data-autosubmit aria-label="Pending item">
@@ -192,52 +237,100 @@ page_start('Pending Tracker', $u, PORTALS[$u['role']]['label']);
         <?php foreach ($byOfficer as $oid => $o): if (!$o['c']['students']) continue; ?><option value="<?= $oid ?>" <?= $fOfficer === $oid ? 'selected' : '' ?>><?= h($o['name']) ?> (<?= $o['department'] === 'frontend' ? 'FE' : 'BE' ?>)</option><?php endforeach; ?>
       </select>
     <?php endif; ?>
-    <select name="doc" data-autosubmit aria-label="Missing document"><option value="">Any document</option><?php foreach (array_keys($docFreq) as $dn): ?><option <?= $fDoc === $dn ? 'selected' : '' ?>><?= h($dn) ?></option><?php endforeach; ?></select>
+    <?php if ($cat === 'docs'): ?><select name="doc" data-autosubmit aria-label="Missing document"><option value="">Any document</option><?php foreach (array_keys($docFreq) as $dn): ?><option <?= $fDoc === $dn ? 'selected' : '' ?>><?= h($dn) ?></option><?php endforeach; ?></select><?php endif; ?>
     <select name="program_level" data-autosubmit aria-label="Level"><option value="">BS &amp; MS</option><option <?= $fLevel === 'BS' ? 'selected' : '' ?>>BS</option><option <?= $fLevel === 'MS' ? 'selected' : '' ?>>MS</option></select>
     <input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search student…">
+    <?php if ($fSid): ?><input type="hidden" name="sid" value="<?= $fSid ?>"><?php endif; ?>
     <button class="btn sm" type="submit">Filter</button>
-    <?php if ($cat !== 'all' || $fCountry || $fOfficer || $fLevel || $fDoc || $fq): ?><a class="btn sm ghost" href="<?= h(url($base . '/pending.php')) ?>#list">Reset</a><?php endif; ?>
+    <?php if ($cat !== 'all' || $fCountry || $fOfficer || $fLevel || $fDoc || $fq || $fSid): ?><a class="btn sm ghost" href="<?= h(url($base . '/pending.php')) ?>#list">Reset</a><?php endif; ?>
   </form>
+  <?php if ($fSid && $list): ?><p class="small"><b>One student:</b> <?= h($list[0]['name']) ?> · <a href="<?= h(pending_url($base, ['sid' => null])) ?>#list">show everyone</a></p><?php endif; ?>
 
   <?php if (!$list): ?>
-    <div class="empty">Nothing pending for this filter.</div>
-  <?php else: ?>
-  <div class="tbl tbl-pending"><table>
-    <colgroup><col style="width:52px"><col style="width:190px"><col style="width:150px"><col style="width:220px"><col style="width:300px"><col style="width:220px"><col style="width:96px"></colgroup>
-    <thead><tr><th>SR#</th><th>Student</th><th>Processing officers</th><th>Open items</th><th>Documents pending</th><th>Last remark</th><th></th></tr></thead>
-    <tbody>
-      <?php foreach ($list as $r): $pi = $r['_p']; $cn = trim((string)$r['country']); $prof = url($base . '/student.php?id=' . (int)$r['id']); ?>
+    <div class="empty">✓ Nothing pending here.</div>
+  <?php elseif ($cat === 'all'): ?>
+    <div class="tbl"><table class="pend-all">
+      <thead><tr><th>Student</th><th>Officers</th><th>Open items <span class="muted small">(click one to fix it)</span></th><th>Last remark</th><th></th></tr></thead>
+      <tbody>
+      <?php foreach ($list as $r): if (++$shown > $MAX_ROWS) break; $pi = $r['_p']; $cn = trim((string)$r['country']); ?>
         <tr>
-          <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
-          <td><a href="<?= h($prof) ?>"><b><?= h($r['name']) ?></b></a>
-            <div class="order-tags" style="margin-top:4px;"><span class="pill sm"><?= $flagMap[$cn] ?? '' ?> <?= h($cn ?: '—') ?></span><?php if ($r['program_level']): ?><span class="pill sm acc"><?= h($r['program_level']) ?></span><?php endif; ?></div></td>
-          <td class="small">
-            <div class="officer-line"><span class="tag-fe">FE</span> <b><?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: 'Not set') ?></b></div>
-            <div class="officer-line"><span class="tag-be">BE</span> <b><?= h($r['officer_name'] ?: 'Not set') ?></b></div>
-          </td>
-          <td>
-            <div class="chip-row">
-              <?php foreach ($pi['task_keys'] as $k): if ($k === 'docs') continue; ?>
-                <span class="pill sm <?= $k === 'remarks' ? 'bad' : 'warn' ?>" title="<?= h($catHelp[$k]) ?>"><?= h(PENDING_TASKS[$k]) ?><?= $k === 'remarks' && $pi['remark_hours'] !== null ? ' · ' . $pi['remark_hours'] . 'h' : '' ?></span>
-              <?php endforeach; ?>
-              <?php if (!array_diff($pi['task_keys'], ['docs'])): ?><span class="pill sm ok">Only documents</span><?php endif; ?>
-            </div>
-            <?php if ($pi['recording_state']['state'] === 'not_recorded' && strtolower($cn) === 'italy'): ?><div class="small muted" style="margin-top:4px;">No recording: <?= h(mb_strimwidth($pi['recording_state']['reason'], 0, 60, '…')) ?></div><?php endif; ?>
-          </td>
-          <td>
-            <?php if ($pi['docs']): ?>
-              <div class="small muted" style="margin-bottom:4px;"><b class="bad-t"><?= $pi['docs_count'] ?> pending</b> · <?= $pi['docs_in_hand'] ?> of <?= $pi['docs_required'] ?> required in hand</div>
-              <div class="chip-row"><?php foreach ($pi['docs_missing'] as $d): ?><a class="doc-chip" href="<?= h($prof . '#documents') ?>"><?= h($d) ?></a><?php endforeach; ?></div>
-            <?php else: ?>
-              <span class="pill sm ok">✓ All documents received</span>
-            <?php endif; ?>
-          </td>
+          <td><a href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>"><b><?= h($r['name']) ?></b></a><div class="small muted"><?= $flagMap[$cn] ?? '' ?> <?= h($cn ?: '—') ?><?= $r['program_level'] ? ' · ' . h($r['program_level']) : '' ?></div></td>
+          <td class="small"><span class="tag-fe">FE</span> <?= h($officerName($r, 'fe') ?: '—') ?><br><span class="tag-be">BE</span> <?= h($officerName($r, 'be') ?: '—') ?></td>
+          <td><div class="chip-row">
+            <?php foreach ($pi['task_keys'] as $k): ?>
+              <a class="pill sm <?= $k === 'docs' || $k === 'remarks' ? 'bad' : 'warn' ?>" href="<?= h(pending_url($base, ['cat' => $k, 'sid' => (int)$r['id'], 'country' => null, 'officer' => null, 'q' => null]) . '#list') ?>" title="<?= h($catHelp[$k]) ?>"><?= h($k === 'docs' ? 'Documents (' . $pi['docs_count'] . ')' : PENDING_TASKS[$k]) ?></a>
+            <?php endforeach; ?>
+          </div></td>
           <td class="small"><?= last_remarks_cell($r) ?></td>
-          <td><div class="pend-actions"><a class="btn sm primary" href="<?= h($prof) ?>">Open</a><?php if ($dl = safe_link($r['drive_link'] ?? null)): ?><a class="btn sm" href="<?= h($dl) ?>" target="_blank" rel="noopener noreferrer">Drive</a><?php endif; ?></div></td>
+          <td><a class="btn sm" href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>">Open</a></td>
         </tr>
       <?php endforeach; ?>
-    </tbody>
-  </table></div>
+      </tbody>
+    </table></div>
+  <?php else: ?>
+    <?php $gi = 0; foreach ($groups as $gname => $grows): ?>
+    <details class="pend-group" <?= $gi++ === 0 || count($groups) <= 3 || $fOfficer || $fSid ? 'open' : '' ?>>
+      <summary><b><?= h($gname) ?></b> <span class="pill sm <?= $catTone[$cat] === 'bad' ? 'bad' : 'warn' ?>"><?= count($grows) ?></span></summary>
+      <div class="pend-rows">
+      <?php foreach ($grows as $r): if (++$shown > $MAX_ROWS) break; $pi = $r['_p']; $sid = (int)$r['id']; $cn = trim((string)$r['country']);
+            $canFix = $cat === 'remarks' || (($u['role'] ?? '') !== 'counselor' && can_edit_student($u, $r)); ?>
+        <div class="pend-row" id="s<?= $sid ?>">
+          <div class="pr-who">
+            <a href="<?= h(url($base . '/student.php?id=' . $sid)) ?>"><b><?= h($r['name']) ?></b></a>
+            <div class="small muted"><?= $flagMap[$cn] ?? '' ?> <?= h($cn ?: '—') ?><?= $r['program_level'] ? ' · ' . h($r['program_level']) : '' ?> · <span class="tag-fe">FE</span> <?= h($officerName($r, 'fe') ?: '—') ?> · <span class="tag-be">BE</span> <?= h($officerName($r, 'be') ?: '—') ?></div>
+          </div>
+          <div class="pr-what">
+          <?php if (!$canFix): ?>
+            <?php if ($cat === 'docs'): ?><div class="chip-row"><?php foreach ($pi['docs_missing'] as $d): ?><span class="doc-chip"><?= h($d) ?></span><?php endforeach; ?></div><?php endif; ?>
+            <span class="small muted">View only — not your student.</span>
+          <?php elseif ($cat === 'docs'): ?>
+            <?php $listIdx = array_flip($pi['docs_missing_idx'] ?? []); $named = array_values(array_diff($pi['docs_missing'], array_intersect_key(REQUIRED_DOCS, $listIdx))); ?>
+            <?= $qa('docs_received', $sid,
+                '<div class="chip-row">' . implode('', array_map(fn($i) => '<label class="chk-chip"><input type="checkbox" name="docs[]" value="' . $i . '"><span>' . h(REQUIRED_DOCS[$i]) . '</span></label>', $pi['docs_missing_idx'] ?? []))
+                . implode('', array_map(fn($d) => '<span class="doc-chip" title="From the “other documents” note — clear it on the profile when received">' . h($d) . '</span>', $named)) . '</div>'
+                . (($pi['docs_missing_idx'] ?? []) ? '<div class="qa-btns"><button class="btn sm primary" type="submit">✓ Mark ticked as received</button><button class="btn sm" type="submit" name="act" value="docs_asked" title="Note that you asked the student for these">Asked student</button>'
+                . '<a class="btn sm ghost" href="' . h(url($base . '/student.php?id=' . $sid)) . '#documents">Upload files →</a></div>' : '<a class="btn sm ghost" href="' . h(url($base . '/student.php?id=' . $sid)) . '#documents">Open documents →</a>')) ?>
+          <?php elseif ($cat === 'consent'): ?>
+            <?= $qa('consent', $sid, '<span class="small">Signed consent form not received.</span><div class="qa-btns"><button class="btn sm primary" type="submit">✓ Signed form received</button><a class="btn sm ghost" href="' . h(url($base . '/student.php?id=' . $sid)) . '#consent">Upload signed copy →</a></div>') ?>
+          <?php elseif ($cat === 'first_meeting'): ?>
+            <?= $qa('first_meeting', $sid, '<span class="small">Initial meeting not held' . ($r['follow_up_1'] ? ' · follow-up ' . h(fmt_date((string)$r['follow_up_1'])) : '') . '.</span><div class="qa-btns"><button class="btn sm primary" type="submit" name="held" value="1">✓ Meeting held</button><input type="date" name="follow_up" value="' . h((string)($r['follow_up_1'] ?? '')) . '" aria-label="Follow-up date"><button class="btn sm" type="submit">Set follow-up</button></div>') ?>
+          <?php elseif ($cat === 'recording'): ?>
+            <div class="meet-edit" data-meet>
+              <div class="seg seg-sm" role="radiogroup" aria-label="Recording">
+                <label><input type="radio" name="meet_mode_<?= $sid ?>" value="link" checked><span>🔗 Link</span></label>
+                <label><input type="radio" name="meet_mode_<?= $sid ?>" value="none"><span>✖ Not recorded</span></label>
+                <label><input type="radio" name="meet_mode_<?= $sid ?>" value="video"><span>🎬 Video</span></label>
+              </div>
+              <div class="meet-pane" data-pane="link"><?= $qa('meeting_save_link', $sid, '<div class="qa-btns"><input type="url" name="meeting_link" placeholder="https://… recording link" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Save link</button></div>') ?></div>
+              <div class="meet-pane" data-pane="none" hidden><?= $qa('meeting_no_recording', $sid, '<div class="qa-btns"><input name="meeting_note" list="meet-reasons" placeholder="Why was it not recorded?" required><button class="btn sm primary" type="submit">Save reason</button></div>') ?></div>
+              <div class="meet-pane" data-pane="video" hidden><?= $qa('meeting_upload_video', $sid, '<div class="qa-btns"><input type="file" name="meeting_video" accept="video/*,.mp4,.mov,.webm,.mkv,.m4a,.mp3" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Upload</button></div>', true) ?></div>
+            </div>
+          <?php elseif ($cat === 'second_tax'): ?>
+            <?= $qa('second_tax', $sid, '<div class="qa-btns">'
+                . (($r['second_meeting'] ?? '') !== 'Yes' ? '<label class="chk-chip"><input type="checkbox" name="second_meeting" value="1"><span>2nd processing meeting held</span></label>' : '<span class="pill sm ok">2nd meeting ✓</span>')
+                . (($r['tax_meeting'] ?? '') !== 'Yes' ? '<label class="chk-chip"><input type="checkbox" name="tax_meeting" value="1"><span>Tax consultant meeting held</span></label>' : '<span class="pill sm ok">Tax meeting ✓</span>')
+                . '<button class="btn sm primary" type="submit">Save</button></div>') ?>
+          <?php elseif ($cat === 'shortlisting'): ?>
+            <?= $qa('shortlist', $sid, '<div class="qa-btns"><input name="shortlisting" list="uni-list" placeholder="Shortlisted university / universities" value="' . h(stripos((string)$r['shortlisting'], 'pending') !== false ? '' : (string)$r['shortlisting']) . '" required><button class="btn sm primary" type="submit">Save</button></div>') ?>
+          <?php elseif ($cat === 'credentials'): ?>
+            <?= $qa('credentials', $sid, '<div class="qa-btns">'
+                . (trim((string)$r['email']) === '' ? '<input type="email" name="email" placeholder="Student email">' : '<span class="pill sm ok">✓ ' . h($r['email']) . '</span>')
+                . (trim((string)$r['portal_id']) === '' ? '<input name="portal_id" placeholder="University portal ID">' : '<span class="pill sm ok">Portal ✓ ' . h($r['portal_id']) . '</span>')
+                . '<button class="btn sm primary" type="submit">Save</button></div>') ?>
+          <?php elseif ($cat === 'remarks'): ?>
+            <div class="small muted">Edited <?= $pi['remark_hours'] !== null ? $pi['remark_hours'] . 'h ago' : '' ?> without a remark.</div>
+            <?= $qa('remark', $sid, '<div class="qa-btns"><input name="remark_text" placeholder="What was done / what is next…" required style="flex:1 1 260px"><button class="btn sm primary" type="submit">Add remark</button></div>') ?>
+          <?php endif; ?>
+          </div>
+          <div class="pr-go"><a class="btn sm" href="<?= h(url($base . '/student.php?id=' . $sid)) ?>">Open</a></div>
+        </div>
+      <?php endforeach; ?>
+      </div>
+    </details>
+    <?php endforeach; ?>
   <?php endif; ?>
+  <?php if ($shown > $MAX_ROWS): ?><p class="small muted">Showing the first <?= $MAX_ROWS ?>. Filter by officer or country to see the rest.</p><?php endif; ?>
+  <datalist id="meet-reasons"><option>Meeting held in office (not recorded)</option><option>Internet / Zoom issue</option><option>Student did not allow recording</option><option>Meeting not held yet</option><option>Recording lost / not saved</option></datalist>
+  <?php if ($uniList): ?><datalist id="uni-list"><?php foreach ($uniList as $un): ?><option><?= h($un) ?></option><?php endforeach; ?></datalist><?php endif; ?>
 </section>
 <?php page_end();

@@ -222,57 +222,8 @@ if (is_post() && post('action') === 'delete_payment') {
 // ---------- Meeting recording ----------
 if (is_post() && in_array(post('action'), ['meeting_save_link', 'meeting_upload_video', 'meeting_no_recording'], true)) {
     csrf_check();
-    if (!can_update_journey($u)) { flash('You have read-only access to meetings.', 'bad'); redirect($base . "/student.php?id={$id}#meeting"); }
-    $held = post('meeting_held') === '1' ? 'Yes' : null;
-    $act = post('action');
-    $msg = null; $err = null; $set = [];
-    if ($act === 'meeting_save_link') {
-        $link = trim((string)post('meeting_link'));
-        if (!safe_link($link)) $err = 'Paste a full link starting with https://';
-        elseif ($link === trim((string)($r['drive_link'] ?? ''))) $err = 'That is the documents folder link. Paste the link of the recording itself.';
-        else { $set = ['meeting_link' => $link, 'recorded_uploaded' => 'Yes', 'meeting_note' => null]; $msg = 'Recording link saved.'; }
-    } elseif ($act === 'meeting_no_recording') {
-        $why = trim(mb_substr((string)post('meeting_note'), 0, 500));
-        if ($why === '') $err = 'Write why the meeting was not recorded.';
-        else {
-            $set = ['meeting_note' => $why, 'recorded_uploaded' => 'No'];
-            if (!safe_link((string)($r['meeting_link'] ?? ''))) $set['meeting_link'] = null;  // old sheets kept the reason here
-            $msg = 'Note saved: meeting not recorded.';
-        }
-    } else {
-        $oldVid = trim((string)($r['meeting_video_path'] ?? ''));
-        if (post('remove_video') === '1') {
-            if ($oldVid !== '' && is_file(ROOT . '/' . $oldVid)) @unlink(ROOT . '/' . $oldVid);
-            $set = ['meeting_video_path' => null, 'meeting_video_name' => null];
-            if (!student_meeting_url($r)) $set['recorded_uploaded'] = null;
-            $msg = 'Recording removed.'; $held = null;
-        } else {
-            $f = $_FILES['meeting_video'] ?? null;
-            $ext = strtolower(pathinfo((string)($f['name'] ?? ''), PATHINFO_EXTENSION));
-            if (!$f || ($f['error'] ?? 4) === UPLOAD_ERR_NO_FILE) $err = 'Choose the recording file first.';
-            elseif (in_array($f['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) $err = 'The file is larger than the server allows (' . (int)(meeting_upload_limit() / 1048576) . ' MB). Upload it to Drive and use the Link option instead.';
-            elseif ($f['error'] !== UPLOAD_ERR_OK) $err = 'Upload failed, please try again.';
-            elseif (!in_array($ext, ['mp4', 'mov', 'webm', 'mkv', 'm4v', 'm4a', 'mp3', 'wav', 'ogg'], true)) $err = 'Upload a video or audio file (mp4, mov, webm, mkv, m4a, mp3).';
-            else {
-                $dir = ROOT . '/uploads/meetings/' . $id;
-                if (!is_dir($dir)) @mkdir($dir, 0755, true);
-                $disk = 'meeting_' . time() . '_' . bin2hex(random_bytes(5)) . '.' . $ext;
-                if (is_dir($dir) && is_writable($dir) && move_uploaded_file($f['tmp_name'], $dir . '/' . $disk)) {
-                    if ($oldVid !== '' && is_file(ROOT . '/' . $oldVid)) @unlink(ROOT . '/' . $oldVid);
-                    $set = ['meeting_video_path' => 'uploads/meetings/' . $id . '/' . $disk, 'meeting_video_name' => basename((string)$f['name']), 'recorded_uploaded' => 'Yes', 'meeting_note' => null];
-                    $msg = 'Recording uploaded.';
-                } else $err = 'The server could not save the file here. Upload it to Drive and use the Link option instead.';
-            }
-        }
-    }
-    if ($err) { flash($err, 'bad'); redirect($base . "/student.php?id={$id}#meeting"); }
-    if ($held) $set['initial_meeting'] = 'Yes';
-    if ($set) {
-        $cols = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
-        q("UPDATE students SET $cols, updated_at = ? WHERE id = ?", array_merge(array_values($set), [now(), $id]));
-        log_activity('student', $id, 'meeting_updated', null, array_diff_key($set, ['meeting_video_path' => 1]), (int)$u['id']);
-    }
-    flash($msg ?? 'Saved.');
+    $res = save_meeting_recording($u, $r, (string)post('action'), $_POST, $_FILES);
+    flash($res['ok'] ? $res['message'] : $res['error'], $res['ok'] ? 'ok' : 'bad');
     redirect($base . "/student.php?id={$id}#meeting");
 }
 
@@ -538,7 +489,11 @@ if (is_post() && post('action') === 'save') {
             $docStatus = in_array($v, DOC_STATUS, true) ? $v : ($existingDoc['status'] ?? 'Pending');
             // Received / Verified may be marked without an upload: the file can be in the student's Google Drive folder
             if ($docStatus === '') $docStatus = 'Pending';
-            if ($filePath && $docStatus === 'Pending' && !empty($_FILES['doc_file_' . $i]['name'])) $docStatus = 'Received';
+            $newFile = $filePath && $filePath !== ($existingDoc['file_path'] ?? null);
+            if ($newFile && in_array($docStatus, ['Pending', 'Requested', 'Verified'], true)) $docStatus = 'Received';   // a new file is received and must be checked again
+            // Only PMS Lead / Admin / Super Admin with "Verify documents" access may mark Verified
+            if ($docStatus === 'Verified' && ($existingDoc['status'] ?? '') !== 'Verified' && !can_verify_docs($u)) $docStatus = $existingDoc['status'] ?? 'Received';
+            if ($existingDoc && $docStatus === ($existingDoc['status'] ?? '') && $filePath === ($existingDoc['file_path'] ?? null)) continue;   // unchanged
             if ($existingDoc) {
                 q('UPDATE student_documents SET status = ?, file_path = ?, file_name = ?, file_size = ?, mime_type = ?, uploaded_at = ?, uploaded_by = ?, updated_by = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?',
                   [$docStatus, $filePath, $fileName, $fileSize, $mimeType, $uploadedAt, $uploadedBy, (int)$u['id'], now(), $id, $i]);
@@ -548,6 +503,7 @@ if (is_post() && post('action') === 'save') {
             }
         }
 
+        sync_docs_checklist($id);
         flash('Student saved.');
         redirect($base . "/student.php?id=$id");
     }
@@ -878,7 +834,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <div class="doc-summary">
       <div class="doc-summary-row">
         <?php if ($dsInfo['complete']): ?>
-          <span class="pill ok">✓ All required documents received</span>
+          <span class="pill ok">✓ All required documents received</span><?php if ($dsInfo['by_sheet']): ?> <span class="small muted">· <?= $dsInfo['by_sheet'] ?> confirmed on the sheet (“Docs checklist”), not ticked one by one yet</span><?php endif; ?>
         <?php else: ?>
           <b class="bad-t"><?= $dsInfo['count'] ?> document<?= $dsInfo['count'] === 1 ? '' : 's' ?> pending</b>
           <span class="muted small">· <?= $dsInfo['in_hand'] ?> of <?= $dsInfo['required'] ?> required in hand</span>
@@ -936,7 +892,8 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
         <?php endif; ?>
         <div class="seg seg-sm doc-status" role="radiogroup" aria-label="<?= h($d) ?> status">
           <?php foreach (['Pending' => 'Pending', 'Requested' => 'Asked', 'Received' => 'Received', 'Verified' => 'Verified', 'Not Required' => 'N/A'] as $ov => $ol): ?>
-            <label title="<?= h($ov) ?>"><input type="radio" name="doc_<?= $i ?>" value="<?= h($ov) ?>" <?= ($v === $ov || ($v === '' && $ov === 'Pending')) ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span><?= h($ol) ?></span></label>
+            <?php $vDis = $isCounselor || ($ov === 'Verified' && $v !== 'Verified' && !can_verify_docs($u)); ?>
+            <label title="<?= h($ov === 'Verified' && !can_verify_docs($u) ? 'Verified is set by the PMS Lead after checking' : $ov) ?>"><input type="radio" name="doc_<?= $i ?>" value="<?= h($ov) ?>" <?= ($v === $ov || ($v === '' && $ov === 'Pending')) ? 'checked' : '' ?> <?= $vDis ? 'disabled' : '' ?>><span><?= h($ol) ?></span></label>
           <?php endforeach; ?>
         </div>
       </div>

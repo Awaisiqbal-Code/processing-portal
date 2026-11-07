@@ -876,11 +876,11 @@
     // Meeting: Link / Upload video / Not recorded
     document.querySelectorAll('[data-meet]').forEach(function (m) {
       function show() {
-        var c = m.querySelector('input[name="meet_mode"]:checked');
+        var c = m.querySelector('input[name^="meet_mode"]:checked');
         var v = c ? c.value : 'link';
         m.querySelectorAll('.meet-pane').forEach(function (p) { p.hidden = p.getAttribute('data-pane') !== v; });
       }
-      m.querySelectorAll('input[name="meet_mode"]').forEach(function (r) { r.addEventListener('change', show); });
+      m.querySelectorAll('input[name^="meet_mode"]').forEach(function (r) { r.addEventListener('change', show); });
       show();
     });
     // "Update" buttons that open the form right after them (payments)
@@ -1032,6 +1032,20 @@
         if (s && !confirm(s + '\n\nApply this change?')) e.preventDefault();
       });
       update();
+    }
+  });
+})();
+
+/* ---- Verify documents: select all / per student ---- */
+(function () {
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.matches && t.matches('[data-check-all]')) {
+      var f = document.querySelector(t.getAttribute('data-check-all'));
+      if (f) f.querySelectorAll('input[name="docs[]"], [data-row-all]').forEach(function (c) { c.checked = t.checked; });
+    } else if (t.matches && t.matches('[data-row-all]')) {
+      var row = t.closest('.verify-row');
+      if (row) row.querySelectorAll('input[name="docs[]"]').forEach(function (c) { c.checked = t.checked; });
     }
   });
 })();

@@ -563,14 +563,39 @@ function load_doc_stats(?array $studentIds = null): array { return load_doc_stat
  * Documents section (whether the file is in Google Drive or uploaded here makes no difference).
  * Documents an officer typed in the old "pending documents" sheet note are added to the same list.
  */
+/** Sheet "Docs checklist" says the documents are complete ("Yes", or a later-stage note such as nostrification). */
+function sheet_docs_complete(array $r): bool {
+    $v = strtolower(trim((string)($r['docs_checklist'] ?? '')));
+    return $v !== '' && !in_array($v, ['no', 'pending', 'n/a', '-'], true);
+}
+
+/** Keeps the sheet "Docs checklist" in step with the document statuses (one source of truth for "documents complete"). */
+function sync_docs_checklist(int $studentId): void {
+    $r = q('SELECT * FROM students WHERE id = ?', [$studentId])->fetch();
+    if (!$r) return;
+    $st = load_doc_state([$studentId])[$studentId] ?? [];
+    $required = REQUIRED_DOCS;
+    if (strtoupper(trim((string)($r['program_level'] ?? ''))) === 'BS') unset($required[4]);
+    $all = true;
+    foreach ($required as $i => $_) if (!in_array($st[$i] ?? '', DOC_IN_HAND, true)) $all = false;
+    // all required in hand -> the sheet column says Yes as well (never flipped back: a document asked for again is "Requested")
+    if ($all && !sheet_docs_complete($r)) q("UPDATE students SET docs_checklist = 'Yes' WHERE id = ?", [$studentId]);
+}
+
 function student_pending_docs(array $r, array $docStatus): array {
     $level = strtoupper(trim((string)($r['program_level'] ?? '')));
     $required = REQUIRED_DOCS;
     if ($level === 'BS') unset($required[4]);
     $missing = [];
     $inHand = 0;
+    // The sheet's "Docs checklist" (Yes / later-stage text) means the officer confirmed the documents are complete.
+    // That stands unless a document was asked for again in the portal ("Requested") or named in the note below.
+    $sheetDone = sheet_docs_complete($r);
+    $bySheet = 0;
     foreach ($required as $i => $label) {
-        if (in_array($docStatus[$i] ?? '', DOC_IN_HAND, true)) $inHand++;
+        $st = $docStatus[$i] ?? '';
+        if (in_array($st, DOC_IN_HAND, true)) $inHand++;
+        elseif ($sheetDone && $st !== 'Requested') { $inHand++; $bySheet++; }
         else $missing[$i] = $label;
     }
     // Officer's sheet note ("LOR, bank statement") -> same list, no separate category
@@ -599,6 +624,8 @@ function student_pending_docs(array $r, array $docStatus): array {
     }
     $inHand = count(array_filter(array_keys($required), fn($i) => !isset($missing[$i])));
     return [
+        'missing_idx' => array_values(array_filter(array_keys($missing), 'is_int')),
+        'by_sheet'  => $bySheet,
         'missing'   => array_values($missing),
         'count'     => count($missing),
         'in_hand'   => $inHand,
@@ -666,6 +693,7 @@ function student_pending(array $r, array $docState, int $appCount): array {
         'items'         => $items,
         'task_keys'     => array_keys(array_filter($flags)),
         'docs_missing'  => $docs['missing'],
+        'docs_missing_idx' => $docs['missing_idx'],
         'docs_count'    => $docs['count'],
         'docs_in_hand'  => $docs['in_hand'],
         'docs_required' => $docs['required'],

@@ -8,6 +8,7 @@ const PERMISSIONS = [
     'students.edit_all' => ['Edit any student',            'Change profile, documents, payments, meeting and journey of students who are not assigned to them.'],
     'students.add'      => ['Register students',           'Add new students (Add Student form).'],
     'students.assign'   => ['Change assignments',          'Move students between front-end / back-end officers, counselors and leads.'],
+    'docs.verify'       => ['Verify documents',            'Check received documents and mark them Verified (or send them back). Processing officers can only mark Received.'],
     'students.status'   => ['Disable / refund students',   'Set students inactive or disabled, record refunds, bulk edits.'],
     'reports.view'      => ['Reports',                     'Reports and officer pending reports for every officer (with Excel sharing).'],
     'data.export'       => ['Download student data',       'Full CSV / Excel download of student records.'],
@@ -19,8 +20,8 @@ const PERMISSIONS = [
 
 /** Access a role starts with. Admin / PMS Lead: view everything, change nothing unless Super Admin switches it on. */
 const ROLE_DEFAULT_PERMISSIONS = [
-    'admin'            => ['reports.view', 'data.export'],
-    'pms_lead'         => ['reports.view'],
+    'admin'            => ['reports.view', 'data.export', 'docs.verify'],
+    'pms_lead'         => ['reports.view', 'docs.verify'],
     'processing_staff' => ['students.add'],
     'officer'          => ['students.add'],
     'counselor'        => [],
@@ -42,6 +43,8 @@ const PAGE_PERMISSIONS = [
     'admin/logins.php'            => [null, 'logins.manage'],
     'admin/staff.php'             => [null, 'staff.manage'],
     'admin/staff_member.php'      => [null, 'staff.manage'],
+    'admin/verify_docs.php'       => ['docs.verify', 'docs.verify'],
+    'officer/verify_docs.php'     => ['docs.verify', 'docs.verify'],
 ];
 
 const STAFF_ROLE_OPTIONS = [
@@ -73,6 +76,10 @@ function user_perms(array $u): array {
         }
     }
     return $GLOBALS['__perm_cache'][$id] = $perms;
+}
+
+function can_verify_docs(array $u): bool {
+    return ($u['role'] ?? '') === 'super_admin' || (in_array($u['role'] ?? '', ['admin', 'pms_lead'], true) && user_can($u, 'docs.verify'));
 }
 
 function user_can(array $u, string $perm): bool {

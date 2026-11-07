@@ -250,8 +250,7 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
             <td class="num <?= $sm['overdue'] ? 'bad-t' : '' ?>"><?= $sm['overdue'] ?></td>
             <td class="num" style="color:var(--ok)"><b><?= array_sum($c['work']['counts']) ?></b> <span class="small muted">/ <?= $c['work']['touched'] ?> st.</span></td>
             <td class="no-print"><div class="row-actions" style="flex-wrap:nowrap;">
-              <a class="btn sm primary" href="<?= h($qsBase(['officer' => (int)$o['id']])) ?>">Open</a>
-              <button type="button" class="btn sm" data-copy-text="<?= h(pending_share_text($o, $sm, $c['work'], $c['rows'], $from, $to, 10)) ?>" title="Copy WhatsApp summary">📋</button>
+              <a class="btn sm primary" href="<?= h($qsBase(['officer' => (int)$o['id']])) ?>#share">View report</a>
             </div></td>
           </tr>
         <?php endforeach; ?>
@@ -277,11 +276,7 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
         <div class="small muted">Period <?= h(fmt_date($from)) ?> – <?= h(fmt_date($to)) ?></div>
       </div>
     </div>
-    <div class="row-actions no-print">
-      <button type="button" class="btn sm primary" data-copy-text="<?= h($share) ?>">📋 Copy report text</button>
-      <a class="btn sm" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text=<?= rawurlencode($share) ?>">💬 Share on WhatsApp</a>
-      <a class="btn sm" href="mailto:?subject=<?= rawurlencode('Pending report — ' . $o['name']) ?>&body=<?= rawurlencode($share) ?>">✉️ Email</a>
-    </div>
+    <div class="row-actions no-print"><a class="btn sm primary" href="#share">Report to share ↓</a></div>
   </section>
 
   <div class="kpis">
@@ -292,6 +287,19 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
     <div class="kpi"><div class="l">Untouched 7+ days</div><div class="v"><?= $sum['stale'] ?></div><div class="s">No remark / edit</div></div>
     <div class="kpi"><div class="l">Done in period</div><div class="v" style="color:var(--ok)"><?= array_sum($work['counts']) ?></div><div class="s">on <?= $work['touched'] ?> students</div></div>
   </div>
+
+  <?php $oContact = (function () use ($oid) { try { return q('SELECT phone, email FROM users WHERE id = ?', [$oid])->fetch() ?: []; } catch (Throwable) { return []; } })();
+        $waShare = wa_link($oContact['phone'] ?? null, $share) ?: 'https://wa.me/?text=' . rawurlencode($share); ?>
+  <section class="panel share-panel" id="share">
+    <div class="panel-h"><div><h2>Report to share</h2><p>Read it first. Then copy it, or send it on WhatsApp<?= !empty($oContact['phone']) ? ' straight to ' . h($o['name']) . ' (' . h($oContact['phone']) . ')' : '' ?>.</p></div></div>
+    <pre class="share-preview"><?= h($share) ?></pre>
+    <div class="row-actions no-print">
+      <button type="button" class="btn sm primary" data-copy-text="<?= h($share) ?>">📋 Copy report</button>
+      <a class="btn sm" target="_blank" rel="noopener noreferrer" href="<?= h($waShare) ?>">💬 Share on WhatsApp</a>
+      <a class="btn sm" href="mailto:<?= h($oContact['email'] ?? '') ?>?subject=<?= rawurlencode('Pending report — ' . $o['name']) ?>&body=<?= rawurlencode($share) ?>">✉️ Email</a>
+      <a class="btn sm ghost" href="<?= h($qsBase(['download' => 'xlsx'])) ?>">⬇ Excel (full list)</a>
+    </div>
+  </section>
 
   <div class="grid2">
     <section class="panel">

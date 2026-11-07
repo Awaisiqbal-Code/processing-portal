@@ -13,8 +13,8 @@ function nav_items(string $role): array {
             'admin/pending_report.php'    => 'Officer Pending Reports',
             'admin/disabled_refunds.php'  => 'Disabled & Refunds',
             'admin/consent_templates.php' => 'Consent Templates',
-            'admin/staff.php'             => 'Staff and admins',
-            'admin/roles.php'             => 'User & Role Management',
+            'admin/verify_docs.php'       => 'Verify documents',
+            'admin/staff.php'             => 'Team',
             'admin/logins.php'            => 'Student logins',
         ],
         'admin' => [
@@ -27,7 +27,8 @@ function nav_items(string $role): array {
             'admin/pending_report.php'    => 'Officer Pending Reports',
             'admin/disabled_refunds.php'  => 'Disabled & Refunds',
             'admin/consent_templates.php' => 'Consent Templates',
-            'admin/staff.php'             => 'Staff and admins',
+            'admin/verify_docs.php'       => 'Verify documents',
+            'admin/staff.php'             => 'Team',
             'admin/logins.php'            => 'Student logins',
         ],
         'pms_lead' => [
@@ -37,6 +38,7 @@ function nav_items(string $role): array {
             'officer/programs.php'       => 'University Programs',
             'officer/reports.php'        => 'Reports',
             'officer/pending_report.php' => 'Officer Pending Reports',
+            'officer/verify_docs.php'    => 'Verify documents',
         ],
         'processing_staff', 'officer' => [
             'officer/index.php'          => 'Dashboard',
@@ -70,6 +72,7 @@ function nav_icon(string $href): string {
         'disabled_refunds'  => '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
         'consent_templates' => '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/>',
         'staff'             => '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+        'verify_docs'       => '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M14 3v5h5"/><circle cx="16.5" cy="16.5" r="4.5"/><path d="m14.6 16.6 1.4 1.4 2.6-2.8"/>',
         'roles'             => '<path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
         'logins'            => '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l2 2M15 8l2 2"/>',
         default             => '<circle cx="12" cy="12" r="8"/>',

@@ -110,6 +110,13 @@ function current_user(?string $role = null): ?array {
                 $_SESSION['session_replaced'] = true;
                 continue;
             }
+            // A copied session cookie used in another browser / device does not carry this sign-in over.
+            $myDevice = (string)($_SESSION['auth'][$slot]['ua'] ?? '');
+            if ($myDevice !== '' && !hash_equals($myDevice, session_device_hash())) {
+                unset($_SESSION['auth'][$slot]);
+                $_SESSION['session_replaced'] = true;
+                continue;
+            }
         }
         unset($row['session_token']);
         if ($role !== null && !role_satisfies($row['role'], $role)) {
@@ -161,6 +168,11 @@ function logout_now(?string $role = null): void {
             session_destroy();
         }
     }
+}
+
+/** Fingerprint of the browser that signed in (user agent), so a copied session cookie does not work elsewhere. */
+function session_device_hash(): string {
+    return substr(hash('sha256', (string)($_SERVER['HTTP_USER_AGENT'] ?? '') . '|' . (defined('APP_KEY') ? APP_KEY : 'ptp')), 0, 32);
 }
 
 /** Roles that are limited to one active browser at a time (all staff by default). */
@@ -237,9 +249,13 @@ function attempt_login(string $portal, string $username, string $password): ?str
             'role' => $actualRole,
             'last' => time(),
             'sid'  => $sessionToken,
+            'ua'   => session_device_hash(),
         ],
     ];
     unset($_SESSION['session_replaced']);
+    if (!empty($u['session_token']) && single_session_applies($actualRole)) {
+        flash('Signed in. Your account was open on another device — that device has been signed out.');
+    }
     $_SESSION['last_login_role'] = $actualRole;
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 

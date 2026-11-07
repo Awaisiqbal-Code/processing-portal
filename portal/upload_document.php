@@ -73,13 +73,18 @@ if ($action === 'delete_custom') {
 if ($action === 'set_doc_status' && is_staff_role($u['role'])) {
     $docIndex = (int)post('doc_index');
     $newStatus = trim((string)post('doc_status'));
+    if ($newStatus === 'Verified' && !can_verify_docs($u)) {
+        flash('Only the PMS Lead (or an admin with “Verify documents” access) can mark documents Verified.', 'bad');
+        redirect_back();
+    }
     if (isset(DOCS[$docIndex]) && in_array($newStatus, ['Pending', 'Requested', 'Received', 'Verified'], true)) {
         $existing = q("SELECT * FROM student_documents WHERE student_id = ? AND doc_index = ?", [$studentId, $docIndex])->fetch();
         if ($existing) {
-            q("UPDATE student_documents SET status = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?", [$newStatus, now(), $studentId, $docIndex]);
+            q("UPDATE student_documents SET status = ?, updated_by = ?, updated_at = ? WHERE student_id = ? AND doc_index = ?", [$newStatus, (int)$u['id'], now(), $studentId, $docIndex]);
         } else {
-            q("INSERT INTO student_documents (student_id, doc_index, status, updated_at) VALUES (?, ?, ?, ?)", [$studentId, $docIndex, $newStatus, now()]);
+            q("INSERT INTO student_documents (student_id, doc_index, status, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)", [$studentId, $docIndex, $newStatus, (int)$u['id'], now()]);
         }
+        sync_docs_checklist($studentId);
         log_action("Marked document '" . DOCS[$docIndex] . "' as {$newStatus}", $studentId);
         flash("Document '" . DOCS[$docIndex] . "' marked as {$newStatus}.", 'ok');
     }
@@ -181,6 +186,7 @@ if ($docIndex >= 0 && isset(DOCS[$docIndex])) {
     } elseif ($docIndex === 11) {
         q("UPDATE students SET visa = 'Granted', updated_at = ? WHERE id = ?", [now(), $studentId]);
     }
+    sync_docs_checklist($studentId);
     log_action("Uploaded document: {$docName}", $studentId);
     flash("Document '{$docName}' uploaded successfully!", 'ok');
 } elseif ($customTitle !== '') {

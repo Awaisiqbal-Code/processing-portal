@@ -267,6 +267,20 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   </div>
 </div>
 
+<?php if (can_verify_docs($u)):
+    $vq = docs_waiting_verification($u);
+    if ($vq):
+        $vNames = staff_name_map(); $vBy = [];
+        foreach ($vq as $vd) { $k = (int)($vd['updated_by'] ?: ($vd['officer_id'] ?: $vd['frontend_officer_id'])); $vBy[$k] = ($vBy[$k] ?? 0) + 1; }
+        arsort($vBy); ?>
+<a class="verify-cta" href="<?= h(url($base . '/verify_docs.php')) ?>">
+  <span class="vc-n"><?= count($vq) ?></span>
+  <span class="vc-t"><b>documents received — waiting for you to verify</b>
+    <span class="small"><?= h(implode(' · ', array_map(fn($k, $c) => ($vNames[$k] ?? 'Imported') . ' ' . $c, array_keys(array_slice($vBy, 0, 5, true)), array_slice($vBy, 0, 5, true)))) ?><?= count($vBy) > 5 ? ' · …' : '' ?></span></span>
+  <span class="btn sm primary">Check &amp; verify →</span>
+</a>
+<?php endif; endif; ?>
+
 <div class="kpis">
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php')) ?>"><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><?= $thisMonth ?> added this month · Click to view</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or first meeting still open</div></a>

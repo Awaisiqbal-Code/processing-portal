@@ -162,6 +162,7 @@ require APP . '/auth.php';
 require APP . '/services.php';
 require APP . '/workflow.php';
 require APP . '/staff.php';
+require APP . '/quick_actions.php';
 
 // Apply pending additive schema migrations automatically (once) so a plain `php -S` run works too.
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {

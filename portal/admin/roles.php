@@ -24,6 +24,8 @@ if (($curr['role'] ?? '') !== 'super_admin') {
 
 $u = require_role('super_admin');
 $wantsJson = str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json');
+// Everything on this page now lives on Team (admin/staff.php). The JSON API below stays for scripts.
+if (!is_post() && !$wantsJson) redirect('admin/staff.php');
 
 if (is_post()) {
     csrf_check();
