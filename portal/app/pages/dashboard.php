@@ -301,86 +301,100 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 </section>
 <?php endif; ?>
 
-<div class="kpis">
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php')) ?>"><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><?= $thisMonth ?> added this month · Click to view</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or first meeting still open</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Documents: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · 1st meeting: <?= $pendingMeetings ?> &rarr;</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> offers received</div></a>
-  <?php
-    // Applications: sent to universities vs still to send (shortlisted, not yet submitted) — this dashboard's students only
-    $scopeIds = array_flip(array_map(fn($x) => (int)$x['id'], $rows));
-    $appsSent = 0; $appsLeft = 0; $stuSent = []; $stuLeft = [];
-    foreach (q('SELECT student_id, status FROM student_applications') as $ap) {
-        $sidA = (int)$ap['student_id'];
-        if (!isset($scopeIds[$sidA])) continue;
-        if (app_is_submitted($ap['status'])) { $appsSent++; $stuSent[$sidA] = true; }
-        elseif (app_is_remaining($ap['status'])) { $appsLeft++; $stuLeft[$sidA] = true; }
-    }
-  ?>
-  <div class="kpi kpi-apps">
-    <a class="kpi-link" href="<?= h(url($base . '/students.php?kpi=apps_submitted')) ?>"><div class="l">Applications submitted</div><div class="v" style="color:var(--ok)"><?= $appsSent ?></div><div class="s">for <?= count($stuSent) ?> students</div></a>
-    <a class="kpi-left" href="<?= h(url($base . '/students.php?kpi=apps_remaining')) ?>"><b><?= $appsLeft ?></b> still to submit · <?= count($stuLeft) ?> students →</a>
-  </div>
-</div>
-
 <?php
+  // ---------- numbers for the KPI tiles and the country cards (this dashboard's students only) ----------
+  $scopeIds = array_flip(array_map(fn($x) => (int)$x['id'], $rows));
+  $appsSent = 0; $appsLeft = 0; $stuSent = []; $stuLeft = [];
+  $appByStudent = [];
+  foreach (q('SELECT student_id, status FROM student_applications') as $ap) {
+      $sidA = (int)$ap['student_id'];
+      if (!isset($scopeIds[$sidA])) continue;
+      if (app_is_submitted($ap['status'])) { $appsSent++; $stuSent[$sidA] = true; $appByStudent[$sidA]['sent'] = ($appByStudent[$sidA]['sent'] ?? 0) + 1; }
+      elseif (app_is_remaining($ap['status'])) { $appsLeft++; $stuLeft[$sidA] = true; $appByStudent[$sidA]['left'] = ($appByStudent[$sidA]['left'] ?? 0) + 1; }
+  }
   $countryStats = [];
   $flagMap = country_flags_map();
   foreach ($rows as $r) {
       $cName = trim((string)($r['country'] ?? '')) ?: 'Other';
-      if (!isset($countryStats[$cName])) {
-          $countryStats[$cName] = ['total' => 0, 'bs' => 0, 'ms' => 0, 'pending_docs' => 0, 'offers' => 0];
+      $c = &$countryStats[$cName];
+      $c ??= ['total' => 0, 'active' => 0, 'bs' => 0, 'ms' => 0, 'pending_docs' => 0, 'docs_ok' => 0, 'any' => 0, 'offers' => 0, 'visa' => 0, 'sent' => 0, 'left' => 0, 'stu_sent' => 0, 'fe' => [], 'be' => []];
+      $c['total']++;
+      if (($r['program_level'] ?? '') === 'BS') $c['bs']++;
+      if (($r['program_level'] ?? '') === 'MS') $c['ms']++;
+      if (($r['student_status'] ?? 'active') === 'active') {
+          $c['active']++;
+          if ($r['_p']['docs']) $c['pending_docs']++; else $c['docs_ok']++;
+          if ($r['_p']['any']) $c['any']++;
       }
-      $countryStats[$cName]['total']++;
-      if (($r['program_level'] ?? '') === 'BS') $countryStats[$cName]['bs']++;
-      if (($r['program_level'] ?? '') === 'MS') $countryStats[$cName]['ms']++;
-      if (($r['student_status'] ?? 'active') === 'active' && $r['_p']['docs']) $countryStats[$cName]['pending_docs']++;
-      if (($r['offer'] ?? '') === 'Yes') $countryStats[$cName]['offers']++;
+      if (($r['offer'] ?? '') === 'Yes') $c['offers']++;
+      if (($r['visa'] ?? '') === 'Granted') $c['visa']++;
+      $c['sent'] += $appByStudent[(int)$r['id']]['sent'] ?? 0;
+      $c['left'] += $appByStudent[(int)$r['id']]['left'] ?? 0;
+      if (!empty($appByStudent[(int)$r['id']]['sent'])) $c['stu_sent']++;
+      unset($c);
   }
   uasort($countryStats, fn($a, $b) => $b['total'] <=> $a['total']);
-  // applications of the students on this dashboard only (scoped), by the student's country
-  $appCountsByCountry = [];
-  foreach ($rows as $r) {
-      $cName = trim((string)($r['country'] ?? '')) ?: 'Other';
-      $appCountsByCountry[$cName] = ($appCountsByCountry[$cName] ?? 0) + ($dashApps[(int)$r['id']] ?? 0);
-  }
+  $pct = fn($a, $b) => $b ? (int)round($a / $b * 100) : 0;
+  $countryTint = ['Italy' => '#10B981', 'France' => '#3B82F6', 'Germany' => '#F59E0B', 'Czech Republic' => '#EF4444', 'China' => '#E11D48', 'Austria' => '#F43F5E'];
 ?>
+<div class="kpis kpi-glow">
+  <a class="kpi kg kg-blue" href="<?= h(url($base . '/students.php')) ?>">
+    <span class="kg-ic">🎓</span><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><b>+<?= $thisMonth ?></b> this month</div></a>
+  <a class="kpi kg kg-violet" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>">
+    <span class="kg-ic">🧭</span><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or 1st meeting open</div></a>
+  <a class="kpi kg kg-amber" href="<?= h(url($base . '/pending.php')) ?>">
+    <span class="kg-ic">⏳</span><div class="l">Pending tracker</div><div class="v"><?= $pendingTotalCases ?></div>
+    <div class="kg-chips"><span>📄 <?= $pendingDocsCases ?></span><span>✍ <?= $pendingConsents ?></span><span>🤝 <?= $pendingMeetings ?></span></div></a>
+  <a class="kpi kg kg-green" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>">
+    <span class="kg-ic">🛂</span><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $offers ?> offers received · <?= $refused ?> refused</div></a>
+  <div class="kpi kg kg-teal kpi-apps">
+    <span class="kg-ic">🏛</span>
+    <a class="kpi-link" href="<?= h(url($base . '/students.php?kpi=apps_submitted')) ?>"><div class="l">Applications submitted</div><div class="v"><?= $appsSent ?></div><div class="s">for <?= count($stuSent) ?> students</div></a>
+    <a class="kpi-left" href="<?= h(url($base . '/students.php?kpi=apps_remaining')) ?>"><b><?= $appsLeft ?></b> still to submit · <?= count($stuLeft) ?> students →</a>
+    <div class="kg-bar" title="<?= $pct($appsSent, $appsSent + $appsLeft) ?>% of shortlisted applications sent"><i style="width:<?= $pct($appsSent, $appsSent + $appsLeft) ?>%"></i></div>
+  </div>
+</div>
+
 <section class="panel" style="margin-bottom:1.25rem;">
   <div class="panel-h">
     <div>
-      <h2>🌍 <?= $admin ? 'Multi-Country Operations Overview' : (count($countryStats) > 1 ? 'My countries' : 'My country') ?></h2>
-      <p>Click a country to see its students, pending items and university applications</p>
+      <h2>🌍 <?= $admin ? 'Countries at a glance' : (count($countryStats) > 1 ? 'My countries' : 'My country') ?></h2>
+      <p>Each card is one destination: students, documents, applications and results. Click anything to open those students.</p>
     </div>
     <div class="row-actions">
-      <a class="btn sm" href="<?= h(url($base . '/pending.php')) ?>">⏳ Full Pending Breakdown &rarr;</a>
-      <a class="btn sm primary" href="<?= h(url($base . '/programs.php')) ?>">🏛 University Programs Directory &rarr;</a>
+      <a class="btn sm" href="<?= h(url($base . '/pending.php')) ?>">⏳ Pending tracker →</a>
+      <a class="btn sm primary" href="<?= h(url($base . '/programs.php')) ?>">🏛 University programs →</a>
     </div>
   </div>
-  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(195px, 1fr)); gap:0.85rem;">
+  <div class="cc-grid">
     <?php foreach ($countryStats as $cName => $st):
-        $flag = $flagMap[$cName] ?? '📍';
-        $appsCnt = $appCountsByCountry[$cName] ?? 0;
+        $tint = $countryTint[$cName] ?? '#1392CB';
+        $docsPct = $pct($st['docs_ok'], $st['active']);
+        $appPct = $pct($st['sent'], $st['sent'] + $st['left']);
+        $cq = rawurlencode($cName);
     ?>
-      <div style="background:var(--sunk); border:1.5px solid var(--border); border-radius:8px; padding:0.9rem 1rem; display:flex; flex-direction:column; gap:0.35rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <a href="<?= h(url($base . '/students.php?country=' . rawurlencode($cName))) ?>" style="text-decoration:none; color:inherit;">
-            <b style="font-size:1rem;"><?= $flag ?> <?= h($cName) ?></b>
-          </a>
-          <a href="<?= h(url($base . '/students.php?country=' . rawurlencode($cName))) ?>" class="pill sm acc" style="text-decoration:none;"><?= $st['total'] ?> students</a>
+      <article class="cc" style="--tint: <?= $tint ?>">
+        <a class="cc-head" href="<?= h(url($base . '/students.php?country=' . $cq)) ?>">
+          <span class="cc-flag"><?= country_flag($cName) ?></span>
+          <span class="cc-name"><b><?= h($cName) ?></b><small><?= $st['bs'] ?> BS · <?= $st['ms'] ?> MS</small></span>
+          <span class="cc-total"><b><?= $st['total'] ?></b><small>students</small></span>
+        </a>
+        <div class="cc-split" title="BS <?= $st['bs'] ?> · MS <?= $st['ms'] ?>"><i class="bs" style="width:<?= $pct($st['bs'], max(1, $st['bs'] + $st['ms'])) ?>%"></i><i class="ms" style="width:<?= $pct($st['ms'], max(1, $st['bs'] + $st['ms'])) ?>%"></i></div>
+
+        <a class="cc-row" href="<?= h(url($base . '/pending.php?cat=docs&country=' . $cq)) ?>#list">
+          <span class="cc-ring" style="--p: <?= $docsPct ?>"><b><?= $docsPct ?>%</b></span>
+          <span class="cc-txt"><b>Documents</b><?php if ($st['pending_docs']): ?><small><b class="warn-t"><?= $st['pending_docs'] ?></b> still sending</small><?php else: ?><small>All complete ✓</small><?php endif; ?></span>
+        </a>
+        <a class="cc-row" href="<?= h(url($base . '/students.php?kpi=apps_submitted&country=' . $cq)) ?>">
+          <span class="cc-ring alt" style="--p: <?= $appPct ?>"><b><?= $appPct ?>%</b></span>
+          <span class="cc-txt"><b>Applications</b><small><b class="ok-t"><?= $st['sent'] ?></b> sent</small><?php if ($st['left']): ?><small><b class="warn-t"><?= $st['left'] ?></b> to submit</small><?php endif; ?></span>
+        </a>
+        <div class="cc-foot">
+          <a href="<?= h(url($base . '/students.php?kpi=offers&country=' . $cq)) ?>"><b><?= $st['offers'] ?></b> offers</a>
+          <a href="<?= h(url($base . '/students.php?kpi=visa_granted&country=' . $cq)) ?>"><b><?= $st['visa'] ?></b> visas</a>
+          <a href="<?= h(url($base . '/pending.php?country=' . $cq)) ?>#list" class="<?= $st['any'] ? 'warn' : '' ?>"><b><?= $st['any'] ?></b> with pending</a>
         </div>
-        <div class="small muted">
-          BS: <b><?= $st['bs'] ?></b> &middot; MS: <b><?= $st['ms'] ?></b>
-          <?php if ($st['offers'] > 0): ?> &middot; Offers: <b><?= $st['offers'] ?></b><?php endif; ?>
-        </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:0.1rem;">
-          <a href="<?= h(url($base . '/pending.php?cat=docs&country=' . rawurlencode($cName))) ?>" class="small" style="color:var(--warn, #f59e0b); font-weight:600; text-decoration:underline;">
-            ⏳ <?= $st['pending_docs'] ?> students · documents pending &rarr;
-          </a>
-          <?php if ($appsCnt > 0): ?>
-            <span class="small" style="color:var(--accent); font-weight:600;">🏛 <?= $appsCnt ?> Apps</span>
-          <?php endif; ?>
-        </div>
-      </div>
+      </article>
     <?php endforeach; ?>
   </div>
 </section>

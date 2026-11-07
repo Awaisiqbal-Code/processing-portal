@@ -1756,3 +1756,53 @@ details[open] > summary { color: var(--fg); }
 .kpi-apps .kpi-link { text-decoration: none; color: inherit; }
 .kpi-left { display: inline-block; font-size: 12.5px; font-weight: 600; color: #B45309; text-decoration: none; padding: 4px 9px; border-radius: 8px; background: rgba(245,158,11,.12); justify-self: start; }
 .kpi-left:hover { background: rgba(245,158,11,.22); }
+
+/* ===== Dashboard: glowing KPI tiles ===== */
+.kpi-glow { gap: 14px; }
+.kpi.kg { --c: #1392CB; position: relative; overflow: hidden; display: grid; align-content: start; gap: 2px; text-decoration: none; color: inherit; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--c) 28%, var(--line)); border-top: 1px solid color-mix(in srgb, var(--c) 45%, var(--line));
+  background: radial-gradient(130% 120% at 100% 0%, color-mix(in srgb, var(--c) 16%, transparent) 0%, transparent 55%), var(--surface);
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 16px 36px -26px color-mix(in srgb, var(--c) 70%, transparent); transition: transform .2s ease, box-shadow .25s ease, border-color .25s ease; }
+.kpi.kg::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--c), color-mix(in srgb, var(--c) 30%, transparent)); }
+.kpi.kg:hover { transform: translateY(-3px); box-shadow: 0 22px 44px -26px color-mix(in srgb, var(--c) 85%, transparent); border-color: color-mix(in srgb, var(--c) 55%, var(--line)); }
+.kpi.kg .l { color: color-mix(in srgb, var(--c) 70%, var(--fg)); }
+.kpi.kg .v { font-size: 36px; letter-spacing: -.02em; background: linear-gradient(180deg, var(--fg), color-mix(in srgb, var(--c) 55%, var(--fg))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.kpi.kg .s b { color: var(--c); }
+.kg-ic { position: absolute; right: 14px; top: 14px; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; font-size: 18px;
+  background: color-mix(in srgb, var(--c) 16%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 25%, transparent) inset; }
+.kg-blue { --c: #38BDF8; } .kg-violet { --c: #A78BFA; } .kg-amber { --c: #F59E0B; } .kg-green { --c: #34D399; } .kg-teal { --c: #2DD4BF; }
+.kg-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.kg-chips span { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 8px; background: color-mix(in srgb, var(--c) 13%, transparent); }
+.kg-bar { height: 5px; border-radius: 5px; background: color-mix(in srgb, var(--c) 15%, transparent); overflow: hidden; margin-top: 6px; }
+.kg-bar i { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, var(--c), #34D399); }
+.kpi-apps .kpi-link { text-decoration: none; color: inherit; }
+.kpi.kg .kpi-left { background: rgba(245,158,11,.12); color: #F59E0B; }
+
+/* ===== Dashboard: country cards ===== */
+.cc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr)); gap: 12px; }
+.cc { --tint: #1392CB; position: relative; display: grid; gap: 10px; padding: 16px; border-radius: 18px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--tint) 22%, var(--line));
+  background: radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--tint) 13%, transparent), transparent 60%), var(--surface);
+  box-shadow: 0 14px 34px -28px color-mix(in srgb, var(--tint) 80%, transparent); transition: transform .2s ease, box-shadow .25s ease, border-color .25s; }
+.cc:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--tint) 45%, var(--line)); box-shadow: 0 22px 44px -28px color-mix(in srgb, var(--tint) 90%, transparent); }
+.cc-head { display: flex; gap: 10px; align-items: center; text-decoration: none; color: inherit; }
+.cc-flag { flex: none; width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; background: color-mix(in srgb, var(--tint) 14%, transparent); }
+.cc-flag .flag { transform: scale(1.35); }
+.cc-name { flex: 1; min-width: 0; display: grid; } .cc-name b { font-size: 16px; line-height: 1.2; } .cc-name small { color: var(--muted); font-size: 12px; }
+.cc-total { display: grid; text-align: right; } .cc-total b { font: 800 24px/1 var(--f-display, inherit); color: var(--tint); } .cc-total small { color: var(--muted); font-size: 11px; }
+.cc-split { display: flex; height: 6px; border-radius: 6px; overflow: hidden; background: var(--sunk); }
+.cc-split .bs { background: color-mix(in srgb, var(--tint) 55%, #fff); } .cc-split .ms { background: var(--tint); }
+.cc-row { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--sunk) 80%, transparent); text-decoration: none; color: inherit; transition: background-color .15s; }
+.cc-row:hover { background: color-mix(in srgb, var(--tint) 12%, var(--sunk)); }
+.cc-ring { --p: 0; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(#34D399 calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 22%, transparent) 0); position: relative; }
+.cc-ring.alt { background: conic-gradient(var(--tint) calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 22%, transparent) 0); }
+.cc-ring::before { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: var(--surface); }
+.cc-ring b { position: relative; font-size: 10.5px; }
+.cc-txt { flex: 1; min-width: 0; display: grid; } .cc-txt b { font-size: 13px; } .cc-txt small { color: var(--muted); font-size: 11.5px; }
+.cc-go { color: var(--muted); }
+.cc-foot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.cc-foot a { display: grid; text-align: center; padding: 6px 4px; border-radius: 10px; background: var(--sunk); text-decoration: none; color: var(--muted); font-size: 11px; font-weight: 600; transition: background-color .15s, color .15s; }
+.cc-foot a b { font-size: 16px; color: var(--fg); }
+.cc-foot a.warn b { color: #F59E0B; }
+.cc-foot a:hover { background: color-mix(in srgb, var(--tint) 14%, var(--sunk)); color: var(--fg); }
+.cc { grid-template-rows: auto auto 1fr 1fr auto; } .cc-txt small b { font-size: 12px; } .cc-txt small b.ok-t { color: #34D399; } .cc-txt small b.warn-t { color: #F59E0B; }
