@@ -1077,3 +1077,19 @@
     b.setAttribute('aria-expanded', p.hidden ? 'false' : 'true');
   });
 })();
+
+/* ---- Applications: tick all remaining for one student ---- */
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('[data-ap-all]') : null;
+  if (!b) return;
+  var f = b.closest('form'); if (!f) return;
+  var boxes = f.querySelectorAll('.ap-row.is-left input[type=checkbox]');
+  var all = Array.prototype.every.call(boxes, function (c) { return c.checked; });
+  boxes.forEach(function (c) { c.checked = !all; });
+  b.textContent = all ? 'Tick all' : 'Untick all';
+});
+/* "Tick all" also opens the folded list so you can see what is ticked */
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('[data-ap-all]') : null;
+  if (b) { var d = b.closest('form').querySelector('.ap-more'); if (d) d.open = true; }
+}, true);

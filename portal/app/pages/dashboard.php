@@ -303,7 +303,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 
 <?php
   // ---------- numbers for the KPI tiles and the country cards (this dashboard's students only) ----------
-  $scopeIds = array_flip(array_map(fn($x) => (int)$x['id'], $rows));
+  $scopeIds = array_flip(array_map(fn($x) => (int)$x['id'], array_filter($rows, fn($x) => ($x['student_status'] ?? 'active') === 'active')));   // active students, same as the Applications page
   $appsSent = 0; $appsLeft = 0; $stuSent = []; $stuLeft = [];
   $appByStudent = [];
   foreach (q('SELECT student_id, status FROM student_applications') as $ap) {
@@ -349,8 +349,8 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <span class="kg-ic">🛂</span><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $offers ?> offers received · <?= $refused ?> refused</div></a>
   <div class="kpi kg kg-teal kpi-apps">
     <span class="kg-ic">🏛</span>
-    <a class="kpi-link" href="<?= h(url($base . '/students.php?kpi=apps_submitted')) ?>"><div class="l">Applications submitted</div><div class="v"><?= $appsSent ?></div><div class="s">for <?= count($stuSent) ?> students</div></a>
-    <a class="kpi-left" href="<?= h(url($base . '/students.php?kpi=apps_remaining')) ?>"><b><?= $appsLeft ?></b> still to submit · <?= count($stuLeft) ?> students →</a>
+    <a class="kpi-link" href="<?= h(url($base . '/applications.php?view=submitted')) ?>"><div class="l">Applications submitted</div><div class="v"><?= $appsSent ?></div><div class="s">for <?= count($stuSent) ?> students</div></a>
+    <a class="kpi-left" href="<?= h(url($base . '/applications.php?view=remaining')) ?>"><b><?= $appsLeft ?></b> still to submit · <?= count($stuLeft) ?> students →</a>
     <div class="kg-bar" title="<?= $pct($appsSent, $appsSent + $appsLeft) ?>% of shortlisted applications sent"><i style="width:<?= $pct($appsSent, $appsSent + $appsLeft) ?>%"></i></div>
   </div>
 </div>
@@ -385,7 +385,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
           <span class="cc-ring" style="--p: <?= $docsPct ?>"><b><?= $docsPct ?>%</b></span>
           <span class="cc-txt"><b>Documents</b><?php if ($st['pending_docs']): ?><small><b class="warn-t"><?= $st['pending_docs'] ?></b> still sending</small><?php else: ?><small>All complete ✓</small><?php endif; ?></span>
         </a>
-        <a class="cc-row" href="<?= h(url($base . '/students.php?kpi=apps_submitted&country=' . $cq)) ?>">
+        <a class="cc-row" href="<?= h(url($base . '/applications.php?view=all&country=' . $cq)) ?>">
           <span class="cc-ring alt" style="--p: <?= $appPct ?>"><b><?= $appPct ?>%</b></span>
           <span class="cc-txt"><b>Applications</b><small><b class="ok-t"><?= $st['sent'] ?></b> sent</small><?php if ($st['left']): ?><small><b class="warn-t"><?= $st['left'] ?></b> to submit</small><?php endif; ?></span>
         </a>
