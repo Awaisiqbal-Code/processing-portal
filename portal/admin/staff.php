@@ -5,6 +5,7 @@ require APP . '/layout.php';
 $u = require_role('admin');
 $isSuper = ($u['role'] === 'super_admin');
 $canStaff = user_can($u, 'staff.manage');
+try { $u['email'] = (string)q('SELECT email FROM users WHERE id = ?', [(int)$u['id']])->fetchColumn(); } catch (Throwable) {}
 
 if (is_post()) {
     csrf_check();
@@ -20,6 +21,26 @@ if (is_post()) {
         $_SESSION['staff_add_old'] = array_intersect_key($_POST, array_flip(['name', 'username', 'email', 'phone', 'role', 'department', 'branch', 'job_title', 'perms']));
         flash($res['error'], 'bad');
         redirect('admin/staff.php?add=1#add-person');
+    }
+    if (in_array($action, ['reset_approve', 'reset_reject'], true)) {
+        [$ok, $m] = $action === 'reset_approve' ? approve_password_reset($u, (int)post('req')) : reject_password_reset($u, (int)post('req'), (string)post('why'));
+        flash($m, $ok ? 'ok' : 'bad');
+        redirect('admin/staff.php#reset-requests');
+    }
+    if ($action === 'mail_settings' && $isSuper) {
+        foreach (['smtp_host', 'smtp_port', 'smtp_user', 'smtp_from', 'smtp_from_name', 'smtp_secure'] as $k) {
+            $v = trim((string)post($k));
+            q('INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', [$k, $v, now()]);
+        }
+        if (trim((string)post('smtp_pass')) !== '') q('INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at', ['smtp_pass', trim((string)post('smtp_pass')), now()]);
+        flash('Email settings saved.');
+        redirect('admin/staff.php#system');
+    }
+    if ($action === 'mail_test' && $isSuper) {
+        [$ok, $err] = send_mail((string)($u['email'] ?? '') ?: (string)post('to'), 'Portal email test', "This is a test email from the ScholarshipHive portal.
+If you can read this, password reset codes will arrive too.");
+        flash($ok ? 'Test email sent.' : 'Test email failed: ' . $err, $ok ? 'ok' : 'bad');
+        redirect('admin/staff.php#system');
     }
     if (in_array($action, ['reset', 'toggle'], true)) {
         $id = (int)post('id');
@@ -169,6 +190,39 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
   <p class="empty" data-tf-empty hidden>No one matches these filters.</p>
 </section>
 
+<?php if ($isSuper || $canStaff): $resets = reset_requests_list(30); $openResets = array_filter($resets, fn($x) => $x['status'] === 'pending'); ?>
+<section class="panel" id="reset-requests">
+  <div class="panel-h"><h2>Password reset requests <?= $openResets ? '<span class="pill sm bad">' . count($openResets) . ' waiting</span>' : '' ?></h2>
+    <p>People ask from “Forgot password?”. Approve → a 6-digit code is emailed to the address on their account → they set a new password. Nobody (including admins) ever sees the password.</p></div>
+  <?php if (!$resets): ?><div class="empty">No requests yet.</div><?php else: ?>
+  <div class="tbl"><table>
+    <thead><tr><th>Person</th><th>Asked</th><th>Status</th><th>Decided by</th><th>Email</th><th></th></tr></thead>
+    <tbody>
+    <?php foreach ($resets as $rq): $em = account_email($rq + ['email' => q('SELECT email FROM users WHERE id = ?', [(int)$rq['user_id']])->fetchColumn(), 'student_id' => q('SELECT student_id FROM users WHERE id = ?', [(int)$rq['user_id']])->fetchColumn()]); ?>
+      <tr>
+        <td><b><?= h($rq['name']) ?></b> <span class="small muted"><?= h($rq['username']) ?> · <?= h(role_label($rq['role'])) ?></span><?= $rq['request_note'] ? '<div class="small">“' . h($rq['request_note']) . '”</div>' : '' ?></td>
+        <td class="small"><?= h(fmt_date(substr((string)$rq['requested_at'], 0, 10))) ?> <?= h(substr((string)$rq['requested_at'], 11, 5)) ?><div class="muted"><?= h((string)$rq['request_ip']) ?></div></td>
+        <td><?php $tone = ['pending' => 'warn', 'approved' => 'acc', 'code_verified' => 'acc', 'completed' => 'ok', 'rejected' => 'bad', 'expired' => '']; ?>
+          <span class="pill sm <?= $tone[$rq['status']] ?? '' ?>"><?= h(['pending' => 'Waiting for approval', 'approved' => 'Code emailed', 'code_verified' => 'Code verified', 'completed' => 'Password changed', 'rejected' => 'Rejected', 'expired' => 'Expired'][$rq['status']] ?? $rq['status']) ?></span>
+          <?= $rq['completed_at'] ? '<div class="small muted">' . h(fmt_date(substr((string)$rq['completed_at'], 0, 10))) . ' ' . h(substr((string)$rq['completed_at'], 11, 5)) . '</div>' : '' ?>
+          <?= str_starts_with((string)$rq['email_status'], 'failed') ? '<div class="small bad-t">' . h($rq['email_status']) . '</div>' : '' ?></td>
+        <td class="small"><?= h($rq['decided_by_name'] ?: '—') ?></td>
+        <td class="small"><?= $em ? h(mask_email($em)) : '<span class="bad-t">No email on account</span>' ?></td>
+        <td><?php if ($rq['status'] === 'pending' && can_approve_reset($u, $rq + ['id' => $rq['user_id']])): ?>
+          <form method="post" class="row-actions" style="justify-content:flex-end"><?= csrf_field() ?><input type="hidden" name="req" value="<?= (int)$rq['id'] ?>">
+            <button class="btn sm primary" name="action" value="reset_approve" <?= !$em || !mail_ready() ? 'disabled title="Needs a valid email on the account and email set up (System → Email)"' : '' ?>>Approve &amp; email code</button>
+            <input name="why" placeholder="Reason (if rejecting)" aria-label="Reason" style="max-width:150px">
+            <button class="btn sm" name="action" value="reset_reject">Reject</button>
+          </form><?php endif; ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table></div>
+  <?php endif; ?>
+  <?php if (!mail_ready()): ?><p class="flash warn" style="margin-top:10px">Email is not set up yet, so codes cannot be sent. <?= $isSuper ? 'Set it up in <a href="#system">System → Email</a>.' : 'Ask the Super Admin to set it up.' ?> Until then use “Reset password” (temporary password) on the person’s row.</p><?php endif; ?>
+</section>
+<?php endif; ?>
+
 <?php if ($isSuper): ?>
 <section class="panel add-person" id="add-person">
   <div class="panel-h"><h2>Add a person</h2><p>A temporary password is created and shown once, ready to send on WhatsApp or email.</p></div>
@@ -225,6 +279,23 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
     <div>Database: <code><?= h($vol['active_db_path']) ?></code> · Backups: <code><?= h($vol['backup_dir']) ?></code></div>
     <div>Hosting: <b><?= $vol['is_railway'] ? 'Railway' : (getenv('VERCEL') ? 'Vercel' : 'Local / standard') ?></b> · Persistent volume: <span class="pill sm <?= $onVolume ? 'ok' : 'warn' ?>"><?= $onVolume ? 'Mounted & writable' : 'Not mounted' ?></span></div>
     <div>One device per account: <b><?= single_session_applies('admin') ? 'On for all staff' : 'Off' ?></b> · Idle warning <?= (int)setting('idle_warning_minutes', 15) ?> min · Auto sign-out <?= (int)setting('idle_logout_minutes', 20) ?> min</div>
+    <?php $ms = mail_settings(); ?>
+    <details class="mail-box" <?= mail_ready() ? '' : 'open' ?>><summary><b>Email (for password reset codes)</b> — <?= mail_ready() ? '<span class="pill sm ok">Ready</span>' : '<span class="pill sm warn">Not set up</span>' ?></summary>
+      <p class="small muted">Use the SMTP of your email provider. For Gmail: host <code>smtp.gmail.com</code>, port <code>465</code>, security SSL, your Gmail address, and an <b>App password</b> (Google Account → Security → App passwords). Values set as environment variables (SMTP_HOST, SMTP_USER, SMTP_PASS …) take priority.</p>
+      <form method="post" class="fields"><?= csrf_field() ?><input type="hidden" name="action" value="mail_settings">
+        <label class="f"><span>SMTP host</span><input name="smtp_host" value="<?= h($ms['host']) ?>" placeholder="smtp.gmail.com"></label>
+        <label class="f"><span>Port</span><input name="smtp_port" value="<?= h((string)$ms['port']) ?>" inputmode="numeric"></label>
+        <label class="f"><span>Security</span><select name="smtp_secure"><option value="ssl" <?= $ms['secure'] === 'ssl' ? 'selected' : '' ?>>SSL (port 465)</option><option value="tls" <?= $ms['secure'] === 'tls' ? 'selected' : '' ?>>TLS / STARTTLS (port 587)</option></select></label>
+        <label class="f"><span>Username (email)</span><input name="smtp_user" value="<?= h($ms['user']) ?>" autocomplete="off"></label>
+        <label class="f"><span>Password / app password</span><input type="password" name="smtp_pass" placeholder="<?= $ms['pass'] !== '' ? '•••••••• (saved — leave empty to keep)' : '' ?>" autocomplete="new-password"></label>
+        <label class="f"><span>From address</span><input name="smtp_from" value="<?= h($ms['from']) ?>" placeholder="same as username"></label>
+        <label class="f"><span>From name</span><input name="smtp_from_name" value="<?= h($ms['from_name']) ?>"></label>
+        <div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Save email settings</button></div>
+      </form>
+      <form method="post" class="row-actions" style="margin-top:8px"><?= csrf_field() ?><input type="hidden" name="action" value="mail_test">
+        <?php if (empty($u['email'])): ?><input type="email" name="to" placeholder="Send test to…" required aria-label="Test address"><?php endif; ?>
+        <button class="btn sm" type="submit" <?= mail_ready() ? '' : 'disabled' ?>>Send a test email<?= !empty($u['email']) ? ' to ' . h($u['email']) : '' ?></button></form>
+    </details>
     <?php if (!$onVolume): ?><div class="flash warn" style="margin:6px 0 0">This server keeps the database on temporary disk<?= getenv('VERCEL') ? ' (Vercel runs several copies, each with its own database)' : '' ?>. Changes can be lost on restart, and “one device per account” cannot be guaranteed across copies. Run the portal on Railway with the <code>/data</code> volume for permanent data.</div><?php endif; ?>
   </div>
 </section>

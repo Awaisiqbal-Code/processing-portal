@@ -1049,3 +1049,19 @@
     }
   });
 })();
+
+/* ---- Password rules: live check ---- */
+(function () {
+  document.addEventListener('input', function (e) {
+    var f = e.target.closest ? e.target.closest('[data-pw-form]') : null;
+    if (!f) return;
+    var pw = (f.querySelector('[data-pw-new]') || {}).value || '', rep = (f.querySelector('[data-pw-repeat]') || {}).value || '';
+    var parts = (f.getAttribute('data-user') || '').split(/\s+/).filter(function (p) { return p.length >= 3; });
+    var low = pw.toLowerCase();
+    var ok = {
+      len: pw.length >= 10, lower: /[a-z]/.test(pw), upper: /[A-Z]/.test(pw), digit: /\d/.test(pw), sym: /[^A-Za-z0-9]/.test(pw),
+      name: pw.length > 0 && !parts.some(function (p) { return low.indexOf(p) !== -1; }), match: pw.length > 0 && pw === rep
+    };
+    f.querySelectorAll('[data-rule]').forEach(function (li) { li.classList.toggle('ok', !!ok[li.getAttribute('data-rule')]); });
+  });
+})();

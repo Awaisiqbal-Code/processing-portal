@@ -11,6 +11,7 @@ $msg = '';
 $err = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrf_check();
     $action = post('action');
 
     if ($action === 'upload') {
@@ -84,14 +85,12 @@ page_start('Consent Templates Management', $u, PORTALS[$u['role']]['label']);
 
     <label class="f">
       <span>Destination Country</span>
-      <input type="text" name="country" list="country-presets" placeholder="e.g. Italy, UK, or leave empty for General">
-      <datalist id="country-presets">
-        <option value="General">General (Default fallback for all countries)</option>
-        <?php foreach ($distinctCountries as $cName): ?>
-          <option value="<?= h($cName) ?>"><?= h($cName) ?></option>
-        <?php endforeach; ?>
-      </datalist>
-      <small class="muted">Leave blank or enter 'General' to apply as default fallback</small>
+      <select name="country" required>
+        <option value="">Choose the country…</option>
+        <?php foreach (all_countries() as $cName): ?><option value="<?= h($cName) ?>"><?= h($cName) ?></option><?php endforeach; ?>
+        <option value="General">General (every country)</option>
+      </select>
+      <small class="muted">Officers see only their own country's forms. “General” is shown to everyone.</small>
     </label>
 
     <label class="f">

@@ -25,6 +25,8 @@ if (is_post()) {
         ]);
     } elseif ($a === 'access') {
         $res = set_staff_permissions($u, $id, $_POST['perms'] ?? []);
+    } elseif ($a === 'countries') {
+        $res = set_extra_countries($u, $id, (array)($_POST['countries'] ?? []));
     } elseif ($a === 'reset' && $canSecurity) {
         $pw = random_password(12);
         q('UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?', [password_hash($pw, PASSWORD_DEFAULT), $id]);
@@ -41,7 +43,7 @@ if (is_post()) {
         $res = ['ok' => false, 'error' => 'You cannot do that for this person.'];
     }
     flash($res['ok'] ? ($res['message'] ?? 'Saved.') : ($res['error'] ?? 'Could not save.'), $res['ok'] ? 'ok' : 'bad');
-    redirect($back . match ($a) { 'role' => '#role', 'access' => '#access', 'details' => '#details', default => '#security' });
+    redirect($back . match ($a) { 'role' => '#role', 'access' => '#access', 'details' => '#details', 'countries' => '#countries', default => '#security' });
 }
 
 $cred = $_SESSION['new_cred'] ?? null; unset($_SESSION['new_cred']);
@@ -193,6 +195,22 @@ page_start($t['name'] . ' · Team', $u, PORTALS[$u['role']]['label']);
       <?php endforeach; ?>
     </div>
     <?php if ($isSuper): ?><div class="actions" style="margin-top:12px"><button class="btn primary" type="submit">Save access</button></div><?php endif; ?>
+  </form>
+</section>
+<?php endif; ?>
+
+<?php if (!in_array($t['role'], ['super_admin', 'admin', 'pms_lead'], true)):
+    $ownC = caseload_countries($id); $extraC = extra_countries($id); ?>
+<section class="panel" id="countries">
+  <div class="panel-h"><h2>Countries</h2><p>Which country's forms they see (Forms page and student profiles). Their own countries come from their students; tick more to give extra access.</p></div>
+  <form method="post">
+    <?= csrf_field() ?><input type="hidden" name="action" value="countries"><input type="hidden" name="id" value="<?= $id ?>">
+    <div class="perm-grid">
+      <?php foreach (all_countries() as $c): $own = in_array($c, $ownC, true); ?>
+        <label class="perm <?= $own ? 'is-fixed' : '' ?>"><input type="checkbox" name="countries[]" value="<?= h($c) ?>" <?= $own || in_array($c, $extraC, true) ? 'checked' : '' ?> <?= $own || !$isSuper ? 'disabled' : '' ?>><span><b><?= country_flag($c) ?> <?= h($c) ?></b><small><?= $own ? 'Own country (has students here)' : (in_array($c, $extraC, true) ? 'Extra access' : 'No access') ?></small></span></label>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($isSuper): ?><div class="actions" style="margin-top:12px"><button class="btn primary" type="submit">Save countries</button></div><?php endif; ?>
   </form>
 </section>
 <?php endif; ?>

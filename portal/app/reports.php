@@ -273,8 +273,8 @@ function generate_student_pdf(array $r, array $docs, array $activity = [], bool 
     // 5. Relevant counselor / follow-up notes & activity
     $pdf->SectionHeading('5. Follow-ups & Processing Record');
     $grid5 = [
-        ['Initial Meeting Follow-up:', $r['follow_up_1'] ?: 'None', '2nd Processing Follow-up:', $r['follow_up_2'] ?: 'None'],
-        ['Tax Consultant Follow-up:', $r['follow_up_3'] ?: 'None', 'Second Meeting Done:', $r['second_meeting'] ?: 'No'],
+        ['Initial Meeting Follow-up:', $r['follow_up_1'] ?: 'None', 'Tax Consultant Meeting:', ($r['tax_meeting'] ?? '') === 'Yes' ? 'Done' : 'Not yet'],
+        ['Tax Consultant Follow-up:', $r['follow_up_3'] ?: 'None', '', ''],
         ['Admission / Offer Done:', $r['offer'] ?: 'No', 'Enrollment / CAS Done:', $r['enrollment'] ?: 'No'],
     ];
     if ($isStaff && !empty($r['remarks'])) {
@@ -375,8 +375,8 @@ function generate_student_csv(array $r, array $docs, bool $isStaff = true): stri
         'Counselor', 'Processing Officer', 'Branch', 'Intake',
         'Received Date', 'Progress Steps Done', 'Total Steps', 'Next Step', 'Visa Status',
         'Docs Checklist Provided', 'Pending Documents Note', 'Consent Form Signed',
-        'Initial Meeting', 'Follow-up 1', 'Recording Uploaded', 'Second Meeting', 'Follow-up 2',
-        'Tax Meeting', 'Follow-up 3', 'Offer Received', 'Enrollment Summary',
+        'Initial Meeting', 'Follow-up 1', 'Recording Uploaded',
+        'Tax Consultant Meeting', 'Follow-up (tax meeting)', 'Offer Received', 'Enrollment Summary',
         '1st Installment', '2nd Installment', '3rd Installment', '4th Installment',
         'Created At', 'Updated At'
     ];
@@ -420,8 +420,6 @@ function generate_student_csv(array $r, array $docs, bool $isStaff = true): stri
         $r['initial_meeting'] ?: '',
         $r['follow_up_1'] ?: '',
         student_has_meeting($r) ? 'Yes' : 'Not Available',
-        $r['second_meeting'] ?: '',
-        $r['follow_up_2'] ?: '',
         $r['tax_meeting'] ?: '',
         $r['follow_up_3'] ?: '',
         $r['offer'] ?: '',
@@ -608,8 +606,8 @@ function generate_monthly_csv(int $year, int $month, array $students, string $fi
         'ID', 'Student Name', 'Counselor', 'Processing Officer', 'Branch', 'Intake',
         'Received Date', 'Progress Steps Done', 'Total Steps', 'Next Step', 'Visa Status',
         'Refund Status', 'Meeting Priority', 'Consent Form',
-        'Docs Checklist', 'Initial Meeting', 'Recording Uploaded', 'Second Meeting',
-        'Tax Meeting', 'Offer Received', 'Enrollment Summary', 'Last Installment',
+        'Docs Checklist', 'Initial Meeting', 'Recording Uploaded',
+        'Tax Consultant Meeting', 'Offer Received', 'Enrollment Summary', 'Last Installment',
         'Remarks', 'Created At', 'Updated At'
     ];
     fputcsv($out, array_map('csv_cell', $headers));
@@ -636,7 +634,6 @@ function generate_monthly_csv(int $year, int $month, array $students, string $fi
             $s['docs_checklist'] ?: '',
             $s['initial_meeting'] ?: '',
             student_has_meeting($s) ? 'Yes' : 'Not Available',
-            $s['second_meeting'] ?: '',
             $s['tax_meeting'] ?: '',
             $s['offer'] ?: '',
             $s['enrollment'] ?: '',

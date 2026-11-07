@@ -11,12 +11,14 @@ if (is_post()) {
     $cur = $_POST['current'] ?? ''; $new = $_POST['new'] ?? ''; $rep = $_POST['repeat'] ?? '';
     $hash = q('SELECT password_hash FROM users WHERE id = ?', [$u['id']])->fetchColumn();
     if (!is_string($cur) || !password_verify($cur, (string)$hash)) $error = 'Your current password is not correct.';
-    elseif (!is_string($new) || strlen($new) < 8) $error = 'Choose a new password of at least 8 characters.';
-    elseif (!preg_match('/[A-Za-z]/', $new) || !preg_match('/\d/', $new)) $error = 'Use at least one letter and one number.';
+    elseif (!is_string($new) || ($pp = password_problems($new, $u))) $error = 'Your new password needs ' . implode(', ', $pp ?? ['at least ' . PASSWORD_MIN . ' characters']) . '.';
     elseif ($new !== $rep) $error = 'The two new passwords do not match.';
-    elseif (password_verify($new, (string)$hash)) $error = 'Choose a password different from the current one.';
+    elseif (password_recently_used((int)$u['id'], $new)) $error = 'Choose a password you have not used recently.';
     else {
-        q('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [password_hash($new, PASSWORD_DEFAULT), $u['id']]);
+        // keep this browser signed in, close every other one
+        $slot = array_key_first(array_filter($_SESSION['auth'] ?? [], fn($a) => (int)($a['uid'] ?? 0) === (int)$u['id']));
+        $tok = $slot !== null ? (string)($_SESSION['auth'][$slot]['sid'] ?? '') : '';
+        set_user_password((int)$u['id'], $new, false, $tok !== '' ? $tok : null);
         session_regenerate_id(true);
         log_action('Changed password');
         flash('Password changed.');
@@ -35,9 +37,10 @@ page_start('Change password', $u, PORTALS[$u['role']]['label']);
     <?= csrf_field() ?>
     <input type="text" name="username" value="<?= h($u['username']) ?>" autocomplete="username" hidden>
     <label class="f"><span>Current password</span><input type="password" name="current" required autocomplete="current-password"></label>
-    <label class="f"><span>New password</span><input type="password" name="new" required minlength="8" autocomplete="new-password"></label>
-    <label class="f"><span>Repeat new password</span><input type="password" name="repeat" required minlength="8" autocomplete="new-password"></label>
-    <p class="muted small">At least 8 characters, with a letter and a number.</p>
+    <label class="f"><span>New password</span><input type="password" name="new" required minlength="<?= PASSWORD_MIN ?>" autocomplete="new-password" data-pw-new></label>
+    <?php include APP . '/pages/_pw_rules.php'; ?>
+    <label class="f"><span>Repeat new password</span><input type="password" name="repeat" required minlength="<?= PASSWORD_MIN ?>" autocomplete="new-password" data-pw-repeat></label>
+    <p class="muted small">Saving signs this account out on every other device.</p>
     <button class="btn primary" type="submit">Save new password</button>
   </form>
 </section>

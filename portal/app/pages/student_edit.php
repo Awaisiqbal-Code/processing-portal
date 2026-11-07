@@ -533,7 +533,10 @@ if (!$isNew) {
     $consentDocs = q("SELECT cd.*, u.name AS uploader_name FROM consent_documents cd LEFT JOIN users u ON u.id = cd.uploaded_by WHERE cd.student_id = ? ORDER BY cd.created_at DESC", [$id])->fetchAll();
     $studentCountry = $r['country'] ?? '';
     $applicableTemplate = get_applicable_consent_template($studentCountry);
-    $consentTemplates = q("SELECT ct.*, u.name AS uploader_name FROM consent_templates ct LEFT JOIN users u ON u.id = ct.uploaded_by ORDER BY CASE WHEN LOWER(TRIM(ct.country)) = LOWER(TRIM(?)) THEN 0 WHEN ct.country IS NULL OR ct.country = '' OR LOWER(TRIM(ct.country)) = 'general' THEN 1 ELSE 2 END, ct.country ASC", [$studentCountry])->fetchAll();
+    // Only this student's country form (and General ones) — never another country's form
+    $consentTemplates = q("SELECT ct.*, u.name AS uploader_name FROM consent_templates ct LEFT JOIN users u ON u.id = ct.uploaded_by
+        WHERE LOWER(TRIM(COALESCE(ct.country, ''))) IN (LOWER(TRIM(?)), '', 'general')
+        ORDER BY CASE WHEN LOWER(TRIM(ct.country)) = LOWER(TRIM(?)) THEN 0 ELSE 1 END, ct.title", [$studentCountry, $studentCountry])->fetchAll();
     
     // Audit Activity Logs
     $activityEntries = q("SELECT al.*, u.name AS actor_name, u.role AS actor_role FROM activity_logs al LEFT JOIN users u ON u.id = al.user_id WHERE al.entity_type = 'student' AND al.entity_id = ? ORDER BY al.created_at DESC LIMIT 50", [$id])->fetchAll();

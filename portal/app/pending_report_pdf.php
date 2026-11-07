@@ -107,7 +107,7 @@ function generate_pending_report_pdf(array $officer, array $sum, array $work, ar
     $y = $pdf->drawChips($pdf->chipRows($done ?: ['Nothing recorded in this period'], 190), 10, $pdf->GetY() + 1, [220, 252, 231], [21, 128, 61]);
 
     // Pending by type
-    $types = ['Documents' => $sum['docs'], 'Consent' => $sum['consent'], 'Meetings' => $sum['meetings'], '2nd / tax meeting' => $sum['second_tax'], 'Shortlisting' => $sum['shortlisting'], 'Email / portal' => $sum['credentials']];
+    $types = ['Documents' => $sum['docs'], 'Consent' => $sum['consent'], 'Meetings' => $sum['meetings'], 'Tax meeting' => $sum['second_tax'], 'Shortlisting' => $sum['shortlisting'], 'Email / portal' => $sum['credentials']];
     $pdf->SetXY(10, $y + 1); $pdf->SetFont('Arial', 'B', 9); $pdf->SetTextColor(15, 23, 42);
     $pdf->Cell(0, 5, pdf_text('Pending by type (students)'), 0, 1);
     $y = $pdf->drawChips($pdf->chipRows(array_map(fn($k, $v) => "$k: $v", array_keys($types), $types), 190), 10, $pdf->GetY() + 1, [254, 243, 199], [146, 64, 14]);

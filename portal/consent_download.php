@@ -18,6 +18,15 @@ if ($type === 'template') {
         http_response_code(404);
         exit('Template not found.');
     }
+    // Staff see the forms of their own countries (plus General); students only their own country's form
+    if ($u['role'] === 'student') {
+        $sc = (string)q('SELECT country FROM students WHERE id = ?', [(int)($u['student_id'] ?? 0)])->fetchColumn();
+        $tc = trim((string)$t['country']);
+        if ($tc !== '' && strtolower($tc) !== 'general' && strcasecmp($tc, trim($sc)) !== 0) { http_response_code(403); exit('Access denied.'); }
+    } elseif (!can_see_country($u, $t['country'] ?? '')) {
+        http_response_code(403);
+        exit('This form is for another country. Ask the Super Admin for access to that country.');
+    }
     $filePath = (string)$t['file_path'];
     $fileName = (string)$t['original_name'];
     $mimeType = (string)$t['mime_type'];

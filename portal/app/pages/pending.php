@@ -104,7 +104,7 @@ $catHelp = [
     'consent'       => 'Signed consent form not marked as received',
     'first_meeting' => 'Initial meeting with the student not held',
     'recording'     => 'No recording link / video and no reason given (Italy)',
-    'second_tax'    => '2nd processing or tax consultant meeting open (Italy)',
+    'second_tax'    => 'Tax consultant meeting not held yet (Italy)',
     'shortlisting'  => 'No shortlisted university yet',
     'credentials'   => 'Student email or university portal ID missing',
     'remarks'       => 'Profile was edited and no staff remark added since',
@@ -306,10 +306,7 @@ $qa = function (string $act, int $sid, string $inner, bool $multipart = false) u
               <div class="meet-pane" data-pane="video" hidden><?= $qa('meeting_upload_video', $sid, '<div class="qa-btns"><input type="file" name="meeting_video" aria-label="Recording file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4a,.mp3" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Upload</button></div>', true) ?></div>
             </div>
           <?php elseif ($cat === 'second_tax'): ?>
-            <?= $qa('second_tax', $sid, '<div class="qa-btns">'
-                . (($r['second_meeting'] ?? '') !== 'Yes' ? '<label class="chk-chip"><input type="checkbox" name="second_meeting" value="1"><span>2nd processing meeting held</span></label>' : '<span class="pill sm ok">2nd meeting ✓</span>')
-                . (($r['tax_meeting'] ?? '') !== 'Yes' ? '<label class="chk-chip"><input type="checkbox" name="tax_meeting" value="1"><span>Tax consultant meeting held</span></label>' : '<span class="pill sm ok">Tax meeting ✓</span>')
-                . '<button class="btn sm primary" type="submit">Save</button></div>') ?>
+            <?= $qa('second_tax', $sid, '<span class="small">Tax consultant meeting not held' . ($r['follow_up_3'] ? ' · follow-up ' . h(fmt_date((string)$r['follow_up_3'])) : '') . '.</span><div class="qa-btns"><button class="btn sm primary" type="submit" name="held" value="1">✓ Tax meeting held</button><input type="date" name="follow_up" aria-label="Follow-up date" value="' . h((string)($r['follow_up_3'] ?? '')) . '"><button class="btn sm" type="submit">Set follow-up</button></div>') ?>
           <?php elseif ($cat === 'shortlisting'): ?>
             <?= $qa('shortlist', $sid, '<div class="qa-btns"><input name="shortlisting" list="uni-list" placeholder="Shortlisted university / universities" value="' . h(stripos((string)$r['shortlisting'], 'pending') !== false ? '' : (string)$r['shortlisting']) . '" required><button class="btn sm primary" type="submit">Save</button></div>') ?>
           <?php elseif ($cat === 'credentials'): ?>

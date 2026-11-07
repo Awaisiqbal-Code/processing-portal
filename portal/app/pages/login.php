@@ -83,10 +83,11 @@ page_start('Sign In · ScholarshipHive Edutancy');
     <?php if ($error): ?><div class="flash bad" role="alert"><?= h($error) ?></div><?php endif; ?>
     <form method="post" action="<?= h($formAction) ?>" class="stack" autocomplete="on">
       <?= csrf_field() ?>
-      <label class="f"><span>Username</span><input name="username" id="username" required autocomplete="username" placeholder="e.g. admin, nimra, mujassam, minahil, sehrish, farwa" value="<?= h(post('username')) ?>" <?= $notice ? "" : "autofocus" ?>></label>
+      <label class="f"><span>Username</span><input name="username" id="username" required autocomplete="username" placeholder="Your username" value="<?= h(post('username')) ?>" <?= $notice ? "" : "autofocus" ?>></label>
       <label class="f"><span>Password</span><input name="password" id="password" type="password" required autocomplete="current-password" placeholder="Enter your password" <?= $notice ? 'autofocus' : '' ?>></label>
       <button class="btn primary" type="submit">Sign in</button>
     </form>
+    <p class="small" style="margin:12px 0 0; text-align:center"><a href="<?= h(url('forgot_password.php')) ?>">Forgot password?</a></p>
   </section>
 </div>
 <?php page_end();

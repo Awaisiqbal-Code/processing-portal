@@ -449,3 +449,62 @@ function staff_history(int $id, int $limit = 40): array {
         return q('SELECT c.*, u.name AS by_name FROM staff_changes c LEFT JOIN users u ON u.id = c.changed_by WHERE c.user_id = ? ORDER BY c.changed_at DESC, c.id DESC LIMIT ' . (int)$limit, [$id])->fetchAll();
     } catch (Throwable) { return []; }
 }
+
+// ---------------------------------------------------------------------------
+// Countries: which country's forms / material a staff member sees.
+// Own countries = countries of the students assigned to them. The Super Admin can add more on Team.
+// ---------------------------------------------------------------------------
+
+function all_countries(): array {
+    $c = array_column(q("SELECT DISTINCT TRIM(country) AS c FROM students WHERE TRIM(COALESCE(country, '')) != '' ORDER BY 1")->fetchAll(), 'c');
+    try { foreach (q("SELECT DISTINCT TRIM(country) AS c FROM consent_templates WHERE TRIM(COALESCE(country, '')) != '' AND LOWER(country) != 'general'") as $r) $c[] = $r['c']; } catch (Throwable) {}
+    $c = array_values(array_unique($c));
+    sort($c);
+    return $c;
+}
+
+/** Countries from the person's own caseload (front end, back end or counselled). */
+function caseload_countries(int $userId): array {
+    return array_column(q("SELECT DISTINCT TRIM(country) AS c FROM students WHERE TRIM(COALESCE(country, '')) != ''
+        AND (officer_id = ? OR frontend_officer_id = ? OR assigned_counselor_id = ?) ORDER BY 1", [$userId, $userId, $userId])->fetchAll(), 'c');
+}
+
+/** Extra countries switched on by the Super Admin. */
+function extra_countries(int $userId): array {
+    try { $raw = q('SELECT countries FROM users WHERE id = ?', [$userId])->fetchColumn(); } catch (Throwable) { return []; }
+    $j = is_string($raw) && $raw !== '' ? json_decode($raw, true) : [];
+    return is_array($j) ? array_values(array_filter(array_map('strval', $j))) : [];
+}
+
+/** null = every country (leads and admins); otherwise the list of countries this person may see. */
+function user_countries(array $u): ?array {
+    if (in_array($u['role'] ?? '', ['super_admin', 'admin', 'pms_lead'], true)) return null;
+    $id = (int)($u['id'] ?? 0);
+    return array_values(array_unique(array_merge(caseload_countries($id), extra_countries($id))));
+}
+
+function can_see_country(array $u, ?string $country): bool {
+    $country = trim((string)$country);
+    if ($country === '' || strtolower($country) === 'general') return true;      // general forms are for everyone
+    $list = user_countries($u);
+    if ($list === null) return true;
+    foreach ($list as $c) if (strcasecmp($c, $country) === 0) return true;
+    return false;
+}
+
+function set_extra_countries(array $actor, int $id, array $countries): array {
+    if (($actor['role'] ?? '') !== 'super_admin') return ['ok' => false, 'error' => 'Only the Super Admin can give country access.'];
+    $valid = all_countries();
+    $clean = array_values(array_filter(array_map('trim', array_map('strval', $countries)), fn($c) => in_array($c, $valid, true)));
+    $old = extra_countries($id);
+    q('UPDATE users SET countries = ? WHERE id = ?', [$clean ? json_encode($clean) : null, $id]);
+    $add = array_diff($clean, $old); $rem = array_diff($old, $clean);
+    if ($add || $rem) staff_log($id, 'access', null, trim(($add ? 'Countries added: ' . implode(', ', $add) . '. ' : '') . ($rem ? 'Countries removed: ' . implode(', ', $rem) . '.' : '')), 0, null, (int)$actor['id']);
+    return ['ok' => true, 'message' => ($add || $rem) ? 'Country access updated.' : 'Nothing changed.'];
+}
+
+/** Consent / country forms this person may see, newest first. */
+function forms_for_user(array $u): array {
+    $all = q("SELECT ct.*, us.name AS uploader_name FROM consent_templates ct LEFT JOIN users us ON us.id = ct.uploaded_by ORDER BY ct.country COLLATE NOCASE, ct.title COLLATE NOCASE")->fetchAll();
+    return array_values(array_filter($all, fn($t) => can_see_country($u, $t['country'] ?? '')));
+}

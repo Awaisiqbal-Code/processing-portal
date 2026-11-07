@@ -53,8 +53,6 @@ const FIELD_GROUPS = [
     ],
     'Processing' => [
         'meeting_priority' => ['Meeting priority', 'select', ['', 'High', 'Normal', 'Low']],
-        'second_meeting'   => ['2nd processing online meeting with client', 'yn'],
-        'follow_up_2'      => ['If not, follow-up date', 'date'],
         'tax_meeting'      => ['Tax consultant meeting done', 'yn'],
         'follow_up_3'      => ['If not, follow-up date', 'date'],
     ],
@@ -267,10 +265,8 @@ function country_field_groups(string $country): array {
                 'drive_link'        => ['Student Documents Drive folder link', 'url'],
                 'meeting_link'      => ['Recorded Meeting / Zoom Link', 'url'],
             ],
-            'Italy Sheet — Processing & Tax Meetings' => [
+            'Italy Sheet — Tax Consultant Meeting' => [
                 'meeting_priority' => ['Meeting priority', 'select', ['', 'High', 'Normal', 'Low']],
-                'second_meeting'   => ['2nd processing online meeting with client', 'yn'],
-                'follow_up_2'      => ['If not, follow-up date', 'date'],
                 'tax_meeting'      => ['Tax consultant meeting done', 'yn'],
                 'follow_up_3'      => ['If not, follow-up date', 'date'],
             ],
@@ -305,7 +301,6 @@ const STAGES = [
     ['Docs checklist',          'docs_checklist',    'We share the list of documents you need to collect.'],
     ['Initial meeting',         'initial_meeting',   'Recorded meeting with your counselor and our front-end team.'],
     ['Recording uploaded',      'recorded_uploaded', 'Your meeting recording is saved in your student folder.'],
-    ['2nd processing meeting',  'second_meeting',    'Online meeting with your processing officer to review your file.'],
     ['Tax consultant',          'tax_meeting',       'Meeting with the tax consultant about your financial documents.'],
     ['Offer received',          'offer',             'Your university admission or offer letter arrives.'],
     ['Enrollment / summary',    'enrollment',        'Your enrollment confirmation or summary is received.'],
@@ -331,7 +326,6 @@ function due_list(array $rows): array {
     $out = [];
     foreach ($rows as $r) {
         if (!empty($r['follow_up_1']) && ($r['initial_meeting'] ?? '') !== 'Yes') $out[] = ['r' => $r, 'date' => $r['follow_up_1'], 'what' => 'Initial recorded meeting'];
-        if (!empty($r['follow_up_2']) && ($r['second_meeting'] ?? '') !== 'Yes')  $out[] = ['r' => $r, 'date' => $r['follow_up_2'], 'what' => '2nd processing meeting'];
         if (!empty($r['follow_up_3']) && ($r['tax_meeting'] ?? '') !== 'Yes')     $out[] = ['r' => $r, 'date' => $r['follow_up_3'], 'what' => 'Tax consultant meeting'];
     }
     usort($out, fn($a, $b) => strcmp($a['date'], $b['date']));

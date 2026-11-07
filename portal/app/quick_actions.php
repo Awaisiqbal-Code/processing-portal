@@ -128,12 +128,14 @@ function pending_quick_action(array $u, array $r, string $act, array $post, arra
         case 'meeting_upload_video':
             return save_meeting_recording($u, $r, $act, $post, $files);
         case 'second_tax':
-            $set = [];
-            if (($post['second_meeting'] ?? '') === '1') $set['second_meeting'] = 'Yes';
-            if (($post['tax_meeting'] ?? '') === '1') $set['tax_meeting'] = 'Yes';
-            if (!$set) return ['ok' => false, 'error' => 'Tick the meeting that was held.'];
-            student_quick_update($u, $sid, $set, 'meetings_held');
-            return ['ok' => true, 'message' => 'Meeting marked held for ' . $r['name'] . '.'];
+            if (($post['held'] ?? '') === '1') {
+                student_quick_update($u, $sid, ['tax_meeting' => 'Yes'], 'tax_meeting_held');
+                return ['ok' => true, 'message' => 'Tax consultant meeting marked held for ' . $r['name'] . '.'];
+            }
+            $d = (string)($post['follow_up'] ?? '');
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) return ['ok' => false, 'error' => 'Pick the follow-up date.'];
+            student_quick_update($u, $sid, ['follow_up_3' => $d], 'tax_meeting_followup');
+            return ['ok' => true, 'message' => 'Tax meeting follow-up date saved for ' . $r['name'] . '.'];
         case 'shortlist':
             $uni = trim(mb_substr((string)($post['shortlisting'] ?? ''), 0, 300));
             if ($uni === '') return ['ok' => false, 'error' => 'Write the shortlisted university (or universities).'];

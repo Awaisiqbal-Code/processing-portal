@@ -366,7 +366,7 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
       <div class="panel-h"><div><h2>⏳ Pending by type</h2><p>How many of <?= h($o['name']) ?>'s students are waiting on each item.</p></div></div>
       <div class="bars">
         <?php
-          $types = ['docs' => 'Documents', 'consent' => 'Consent form', 'meetings' => '1st meeting / recording', 'second_tax' => '2nd / tax meeting', 'shortlisting' => 'University shortlisting', 'credentials' => 'Email / portal account', 'overdue' => '48h remark overdue', 'stale' => 'Untouched 7+ days'];
+          $types = ['docs' => 'Documents', 'consent' => 'Consent form', 'meetings' => '1st meeting / recording', 'second_tax' => 'Tax consultant meeting', 'shortlisting' => 'University shortlisting', 'credentials' => 'Email / portal account', 'overdue' => '48h remark overdue', 'stale' => 'Untouched 7+ days'];
           $mx = max(1, $sum['assigned']);
           foreach ($types as $tk => $tl): ?>
           <div class="bar"><span><?= h($tl) ?></span><span class="t"><i style="width:<?= round($sum[$tk] / $mx * 100, 1) ?>%"></i></span><span class="n num"><?= $sum[$tk] ?></span></div>
