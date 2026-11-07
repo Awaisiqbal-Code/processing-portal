@@ -1750,3 +1750,9 @@ details[open] > summary { color: var(--fg); }
 .wc-l { font-size: 12.5px; color: var(--muted); font-weight: 600; }
 .work-card.is-hot .wc-ic { background: rgba(220,38,38,.1); }
 .work-card.is-hot .wc-n { color: var(--bad); }
+
+/* ---- KPI: applications submitted / still to submit ---- */
+.kpi-apps { display: grid; gap: 6px; }
+.kpi-apps .kpi-link { text-decoration: none; color: inherit; }
+.kpi-left { display: inline-block; font-size: 12.5px; font-weight: 600; color: #B45309; text-decoration: none; padding: 4px 9px; border-radius: 8px; background: rgba(245,158,11,.12); justify-self: start; }
+.kpi-left:hover { background: rgba(245,158,11,.22); }

@@ -975,5 +975,19 @@ function intake_suggestions(): array {
 }
 
 const BRANCHES = ['Lahore', 'Faisalabad', 'Islamabad', 'Sargodha', 'Multan', 'Karachi', 'Peshawar', 'Other'];
+/** Has this university application actually been sent? (Shortlisted / pending / pre-apply = not yet.) */
+function app_is_submitted(?string $status): bool {
+    $st = strtolower(trim((string)$status));
+    if ($st === '' || $st === 'withdrawn') return false;
+    foreach (['shortlist', 'pending', 'pre-apply', 'pre apply', 'not applied', 'invoice', 'fee issue'] as $no) if (str_contains($st, $no)) return false;
+    foreach (['submit', 'applied', 'apply', 'review', 'interview', 'offer', 'accept', 'enrol', 'reject', 'vpd', 'admit'] as $yes) if (str_contains($st, $yes)) return true;
+    return false;
+}
+/** Still to be sent (shortlisted / documents pending …), not withdrawn or decided. */
+function app_is_remaining(?string $status): bool {
+    $st = strtolower(trim((string)$status));
+    return !app_is_submitted($status) && $st !== 'withdrawn';
+}
+
 const APPLICATION_STATUSES = ['Shortlisted', 'Documents Pending', 'Applied', 'Under Review', 'Interview', 'Offer Received', 'Conditional Offer', 'Accepted', 'Enrolled', 'Rejected', 'Withdrawn'];
 const APPLICATION_TYPES = ['Direct', 'Campus France', 'Uni-Assist', 'UniversItaly', 'CSC Scholarship', 'University Portal', 'DSU / Regional Scholarship'];

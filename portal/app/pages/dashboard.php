@@ -306,7 +306,21 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or first meeting still open</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Documents: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · 1st meeting: <?= $pendingMeetings ?> &rarr;</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> offers received</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="#followups-panel"><div class="l">Follow-ups due</div><div class="v <?= $dueNow ? 'bad-t' : '' ?>"><?= $dueNow ?></div><div class="s">Today or overdue</div></a>
+  <?php
+    // Applications: sent to universities vs still to send (shortlisted, not yet submitted) — this dashboard's students only
+    $scopeIds = array_flip(array_map(fn($x) => (int)$x['id'], $rows));
+    $appsSent = 0; $appsLeft = 0; $stuSent = []; $stuLeft = [];
+    foreach (q('SELECT student_id, status FROM student_applications') as $ap) {
+        $sidA = (int)$ap['student_id'];
+        if (!isset($scopeIds[$sidA])) continue;
+        if (app_is_submitted($ap['status'])) { $appsSent++; $stuSent[$sidA] = true; }
+        elseif (app_is_remaining($ap['status'])) { $appsLeft++; $stuLeft[$sidA] = true; }
+    }
+  ?>
+  <div class="kpi kpi-apps">
+    <a class="kpi-link" href="<?= h(url($base . '/students.php?kpi=apps_submitted')) ?>"><div class="l">Applications submitted</div><div class="v" style="color:var(--ok)"><?= $appsSent ?></div><div class="s">for <?= count($stuSent) ?> students</div></a>
+    <a class="kpi-left" href="<?= h(url($base . '/students.php?kpi=apps_remaining')) ?>"><b><?= $appsLeft ?></b> still to submit · <?= count($stuLeft) ?> students →</a>
+  </div>
 </div>
 
 <?php
@@ -452,7 +466,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 
 <?php if (!$admin): ?>
   <section class="panel" id="followups-panel">
-    <div class="panel-h"><h2>Follow-ups</h2><p>Missed meetings with a follow-up date</p></div>
+    <div class="panel-h"><h2>Follow-ups <?= $dueNow ? '<span class="pill sm bad">' . $dueNow . ' due</span>' : '' ?></h2><p>1st meeting and tax consultant meeting follow-up dates</p></div>
     <?php include APP . '/pages/_followups.php'; ?>
   </section>
 <?php endif; ?>
@@ -559,7 +573,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 
 <?php if ($admin): ?>
 <section class="panel" id="followups-panel">
-  <div class="panel-h"><h2>Follow-ups</h2><p>Missed meetings with a follow-up date, all officers</p></div>
+  <div class="panel-h"><h2>Follow-ups <?= $dueNow ? '<span class="pill sm bad">' . $dueNow . ' due</span>' : '' ?></h2><p>1st meeting and tax consultant meeting follow-up dates, all officers</p></div>
   <?php include APP . '/pages/_followups.php'; ?>
 </section>
 <?php endif;

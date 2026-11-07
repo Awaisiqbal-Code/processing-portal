@@ -221,6 +221,13 @@ if ($fs !== '') $rows = array_values(array_filter($rows, fn($r) => $fs === 'clos
 if ($fk === 'onboarding') $rows = array_values(array_filter($rows, fn($r) => ($r['student_status'] ?? 'active') === 'active' && ($r['consent'] !== 'Yes' || $r['initial_meeting'] !== 'Yes' || !student_pending_docs($r, load_doc_state([(int)$r['id']])[(int)$r['id']] ?? [])['complete'])));
 if ($fk === 'offers') $rows = array_values(array_filter($rows, fn($r) => $r['offer'] === 'Yes'));
 if ($fk === 'visa_granted') $rows = array_values(array_filter($rows, fn($r) => $r['visa'] === 'Granted'));
+if ($fk === 'apps_submitted' || $fk === 'apps_remaining') {
+    $kpiApps = [];
+    foreach (q('SELECT student_id, status FROM student_applications') as $ap) {
+        if ($fk === 'apps_submitted' ? app_is_submitted($ap['status']) : app_is_remaining($ap['status'])) $kpiApps[(int)$ap['student_id']] = true;
+    }
+    $rows = array_values(array_filter($rows, fn($r) => isset($kpiApps[(int)$r['id']])));
+}
 if ($fd !== '' && isset(STAGES[(int)$fd])) $rows = array_values(array_filter($rows, fn($r) => stage_done($r, (int)$fd)));
 
 // Processing status (order-style) — computed from the record + saved journey stages
@@ -343,7 +350,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     if ($fs !== '')     $activeFilters['stage'] = 'Next step: ' . $fs;
     if ($fps !== '')    $activeFilters['pstatus'] = 'Status: ' . $fps;
     if ($fjnow !== '' && isset(JOURNEY_STAGES[$fjnow])) $activeFilters['jnow'] = 'Now at: ' . JOURNEY_STAGES[$fjnow][0];
-    if ($fk !== '')     $activeFilters['kpi'] = 'KPI: ' . ucfirst(str_replace('_', ' ', $fk));
+    if ($fk !== '')     $activeFilters['kpi'] = ['apps_submitted' => 'Applications submitted', 'apps_remaining' => 'Applications still to submit', 'onboarding' => 'In onboarding', 'visa_granted' => 'Visa granted', 'offers' => 'Offer received'][$fk] ?? ucfirst(str_replace('_', ' ', $fk));
     if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Step done: ' . STAGES[(int)$fd][0];
   ?>
 
