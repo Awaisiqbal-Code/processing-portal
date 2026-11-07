@@ -135,7 +135,7 @@ function enforce_page_permission(array $u, string $callerFile): void {
     http_response_code(403);
     $home = url(PORTALS[$u['role']]['home'] ?? 'index.php');
     echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>No access</title>'
-       . '<link rel="stylesheet" href="' . h(url('assets/style.css')) . '"></head><body><div class="wrap"><main><div class="narrow" style="margin-top:4rem">'
+       . '<link rel="stylesheet" href="' . h(asset_url('assets/style.css')) . '"></head><body><div class="wrap"><main><div class="narrow" style="margin-top:4rem">'
        . '<section class="panel"><h1>No access to this page</h1><p>' . h(view_only_message($need)) . '</p>'
        . '<p><a class="btn primary" href="' . h($home) . '">Back to dashboard</a></p></section></div></main></div></body></html>';
     exit;

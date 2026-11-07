@@ -101,7 +101,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
 ?>
 
 <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.5rem;">
-  <div>
+  <div style="flex:1 1 280px; min-width:0;">
     <div class="eyebrow" style="color:var(--accent); font-weight:700; text-transform:uppercase; font-size:0.78rem; letter-spacing:0.05em; margin-bottom:0.25rem;">
       Admin Operations · Front End & Back End Processing Teams
     </div>
@@ -167,9 +167,9 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
     <?php endif; ?>
   </div>
 
-  <div style="display:flex; align-items:center; gap:0.4rem;">
+  <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; min-width:0; max-width:100%;">
     <label for="officer-quick-select" class="small muted" style="font-weight:600;">Quick Select:</label>
-    <select id="officer-quick-select" onchange="if(this.value) window.location.href=this.value;" style="padding:0.35rem 0.65rem; border-radius:6px; font-size:0.85rem; border:1px solid var(--line); background:var(--input-bg); color:var(--fg);">
+    <select id="officer-quick-select" onchange="if(this.value) window.location.href=this.value;" style="max-width:100%; min-width:0; padding:0.35rem 0.65rem; border-radius:6px; font-size:0.85rem; border:1px solid var(--line); background:var(--input-bg); color:var(--fg);">
       <option value="<?= h(url('admin/officers.php')) ?>" <?= $selectedId === null ? 'selected' : '' ?>>All Officers Overview</option>
       <optgroup label="Front End Processing Team">
         <?php foreach ($feOfficers as $o): ?>
@@ -253,7 +253,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
             <span class="pill mono">@<?= h($selectedOfficer['username']) ?></span>
           </div>
           <p class="muted" style="margin:0.25rem 0 0 0; font-size:0.88rem;">
-            Assigned Caseload: <b><?= $totalOfficerStudents ?> students</b> (<?= $sInfo['workload_pct'] ?>% of total 250 students) ·
+            Assigned Caseload: <b><?= $totalOfficerStudents ?> students</b> (<?= $sInfo['workload_pct'] ?>% of all <?= (int)$totalStudents ?> students) ·
             Last sign-in: <?= $selectedOfficer['last_login'] ? h(fmt_date(substr($selectedOfficer['last_login'], 0, 10))) : 'Never' ?>
           </p>
         </div>
@@ -557,7 +557,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
     <div class="kpi">
       <div class="l">Follow-ups Due</div>
       <div class="v <?= $totalFollowups ? 'bad-t' : '' ?>"><?= $totalFollowups ?></div>
-      <div class="s">Across all 250 students</div>
+      <div class="s">Across all <?= (int)$totalStudents ?> students</div>
     </div>
   </div>
 
@@ -636,7 +636,7 @@ page_start($pageTitle, $u, PORTALS['admin']['label']);
     <div class="panel-h">
       <div>
         <h2>Back End Processing Team (University Portals, Admissions & Visa Filing)</h2>
-        <p>Data synced from <b>BackEnd - Processing Team Dashboard</b> linked to the exact same 250 student records</p>
+        <p>Data synced from <b>BackEnd - Processing Team Dashboard</b> linked to the same <?= (int)$totalStudents ?> student records</p>
       </div>
     </div>
 

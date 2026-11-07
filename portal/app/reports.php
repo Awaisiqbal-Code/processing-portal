@@ -47,7 +47,7 @@ class PortalReportPDF extends FPDF {
         $this->Cell(120, 7, pdf_text('SCHOLARSHIPHIVE EDUTANCY'), 0, 0, 'L');
         $this->SetFont('Arial', '', 8);
         $this->SetTextColor(74, 101, 128);
-        $this->Cell(0, 7, pdf_text('Generated: ' . date('d/m/Y H:i') . ' UTC'), 0, 1, 'R');
+        $this->Cell(0, 7, pdf_text('Generated: ' . date('d/m/Y H:i')), 0, 1, 'R');
 
         $this->SetFont('Arial', 'B', 11);
         $this->SetTextColor(15, 93, 158); // Deep Academic Blue #0F5D9E

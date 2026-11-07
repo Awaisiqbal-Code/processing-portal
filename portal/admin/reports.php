@@ -77,7 +77,7 @@ if ($viewTab === 'operations') {
     </div>
 
     <!-- Navigation Sub-Tabs -->
-    <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
+    <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
       <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
       <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
       <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=overview')) ?>">Processing Overview</a>
@@ -500,7 +500,7 @@ page_start('Monthly Reports', $u, PORTALS['admin']['label']);
   </div>
 
   <!-- Navigation Sub-Tabs -->
-  <div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
+  <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
     <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=operations')) ?>">Operations &amp; Performance</a>
     <a class="btn sm primary" href="<?= h(url('admin/reports.php?tab=monthly')) ?>">Monthly Archive</a>
     <a class="btn sm ghost" href="<?= h(url('admin/reports.php?tab=overview')) ?>">Processing Overview</a>

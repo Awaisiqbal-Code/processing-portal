@@ -1582,3 +1582,18 @@ tr.is-sel td { background: var(--accent-soft); }
 .vc-t { display: grid; gap: 2px; flex: 1 1 260px; }
 .share-preview { white-space: pre-wrap; word-break: break-word; background: var(--sunk); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font: 13px/1.55 var(--f-mono, ui-monospace, monospace); max-height: 460px; overflow: auto; margin: 0 0 12px; }
 .sys-rows { display: grid; gap: 6px; }
+
+/* ---- Officer report: student cards ---- */
+.rcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+.rcard { border: 1px solid var(--line); border-left: 4px solid #F59E0B; border-radius: 14px; padding: 12px 14px; background: var(--surface); display: grid; gap: 8px; align-content: start; break-inside: avoid; }
+.rcard.is-docs { border-left-color: #EA580C; }
+.rcard.is-late { border-left-color: var(--bad); }
+.rcard header { display: flex; gap: 10px; align-items: flex-start; }
+.rc-n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--sunk); font-weight: 800; font-size: 12px; }
+.rc-who { flex: 1; min-width: 0; }
+.rc-docs { display: grid; gap: 4px; }
+.rc-remark { margin: 0; color: var(--muted); font-style: italic; }
+@media print { .rcards { grid-template-columns: 1fr 1fr; } .rcard { border-color: #cbd5e1; } }
+a.pill, a.doc-chip { text-decoration: none; }
+a.pill:hover, a.doc-chip:hover { filter: brightness(1.05); text-decoration: underline; }
+main { grid-template-columns: minmax(0, 1fr); }   /* children may never force the page wider than the screen */

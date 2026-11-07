@@ -649,7 +649,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
       <input type="hidden" name="action" value="change_status">
       <input type="hidden" name="id" value="<?= (int)$id ?>">
       <label class="small muted" style="font-weight:600;">Change Status:</label>
-      <select name="student_status" id="status-select" onchange="document.getElementById('disabled-reason-box').style.display = (this.value === 'disabled' ? 'inline-block' : 'none');">
+      <select name="student_status" id="status-select" aria-label="Student status" onchange="document.getElementById('disabled-reason-box').style.display = (this.value === 'disabled' ? 'inline-block' : 'none');">
         <option value="active" <?= $stStatus === 'active' ? 'selected' : '' ?>>Active</option>
         <option value="inactive" <?= $stStatus === 'inactive' ? 'selected' : '' ?>>Inactive</option>
         <option value="disabled" <?= $stStatus === 'disabled' ? 'selected' : '' ?>>Disabled</option>
@@ -997,7 +997,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
                   <input type="hidden" name="id" value="<?= (int)$id ?>">
                   <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
                   <div style="display:flex; gap:0.25rem;">
-                    <select name="app_status" style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
+                    <select name="app_status" aria-label="Application status" style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
                       <?php if (!in_array($appSt, APPLICATION_STATUSES, true)): ?><option selected><?= h($appSt) ?></option><?php endif; ?>
                       <?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === $appSt ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?>
                     </select>

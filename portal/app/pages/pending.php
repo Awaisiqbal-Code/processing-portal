@@ -11,7 +11,7 @@ if (is_post() && post('action') === 'quick') {
     $qsid = (int)post('sid');
     $qr = q("SELECT s.* FROM students s WHERE s.id = ? AND $w", array_merge([$qsid], $p))->fetch();
     $back = (string)post('back');
-    if (!preg_match('#^(admin|officer)/pending\.php(\?[^#]*)?$#', $back)) $back = (is_admin_role($u['role']) ? 'admin' : 'officer') . '/pending.php';
+    if (!preg_match('~^(admin|officer)/pending\.php(\?[^#]*)?$~', $back)) $back = (is_admin_role($u['role']) ? 'admin' : 'officer') . '/pending.php';
     if (!$qr) { flash('Student not found.', 'bad'); redirect($back . '#list'); }
     $res = pending_quick_action($u, $qr, (string)post('act'), $_POST, $_FILES);
     flash($res['ok'] ? $res['message'] : $res['error'], $res['ok'] ? 'ok' : 'bad');
@@ -303,7 +303,7 @@ $qa = function (string $act, int $sid, string $inner, bool $multipart = false) u
               </div>
               <div class="meet-pane" data-pane="link"><?= $qa('meeting_save_link', $sid, '<div class="qa-btns"><input type="url" name="meeting_link" placeholder="https://… recording link" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Save link</button></div>') ?></div>
               <div class="meet-pane" data-pane="none" hidden><?= $qa('meeting_no_recording', $sid, '<div class="qa-btns"><input name="meeting_note" list="meet-reasons" placeholder="Why was it not recorded?" required><button class="btn sm primary" type="submit">Save reason</button></div>') ?></div>
-              <div class="meet-pane" data-pane="video" hidden><?= $qa('meeting_upload_video', $sid, '<div class="qa-btns"><input type="file" name="meeting_video" accept="video/*,.mp4,.mov,.webm,.mkv,.m4a,.mp3" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Upload</button></div>', true) ?></div>
+              <div class="meet-pane" data-pane="video" hidden><?= $qa('meeting_upload_video', $sid, '<div class="qa-btns"><input type="file" name="meeting_video" aria-label="Recording file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4a,.mp3" required><input type="hidden" name="meeting_held" value="1"><button class="btn sm primary" type="submit">Upload</button></div>', true) ?></div>
             </div>
           <?php elseif ($cat === 'second_tax'): ?>
             <?= $qa('second_tax', $sid, '<div class="qa-btns">'

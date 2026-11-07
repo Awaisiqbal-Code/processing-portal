@@ -404,8 +404,8 @@ function deny_access(string $targetPortal, string $currentRole): never {
        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
        . '<title>Access Denied · ' . h($targetName) . ' Portal</title>'
        . $bootScript
-       . '<link rel="stylesheet" href="' . h(url('assets/style.css')) . '">'
-       . '<script src="' . h(url('assets/app.js')) . '" defer></script>'
+       . '<link rel="stylesheet" href="' . h(asset_url('assets/style.css')) . '">'
+       . '<script src="' . h(asset_url('assets/app.js')) . '" defer></script>'
        . '</head><body><div class="wrap"><main><div class="narrow" style="margin-top:4rem">'
        . '<section class="panel"><h1 style="color:var(--bad);margin-bottom:0.5rem">Access Denied</h1>'
        . '<p>You are currently signed in as a <b>' . h($roleName) . '</b>. Your account does not have permission to access the ' . h($targetName) . ' portal.</p>'

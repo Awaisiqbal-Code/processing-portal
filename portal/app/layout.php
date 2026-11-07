@@ -185,8 +185,8 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="<?= h(url('assets/style.css')) ?>">
-<script src="<?= h(url('assets/app.js')) ?>" defer></script>
+<link rel="stylesheet" href="<?= h(asset_url('assets/style.css')) ?>">
+<script src="<?= h(asset_url('assets/app.js')) ?>" defer></script>
 </head>
 <body<?= $bodyAttrs ?>>
 <div class="wrap">

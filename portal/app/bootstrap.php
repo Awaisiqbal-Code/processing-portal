@@ -70,6 +70,15 @@ function base_url(): string {
     return $b = rtrim($b, '/');
 }
 function url(string $path = ''): string { return base_url() . '/' . ltrim($path, '/'); }
+/** Asset URL with a version stamp, so browsers pick up new CSS / JS right after an update (no Ctrl+F5 needed). */
+function asset_url(string $path): string {
+    static $v = [];
+    if (!isset($v[$path])) {
+        $f = ROOT . '/' . ltrim($path, '/');
+        $v[$path] = is_file($f) ? substr(md5((string)filesize($f) . '|' . (string)filemtime($f)), 0, 10) : '0';
+    }
+    return url($path) . '?v=' . $v[$path];
+}
 
 // ---------- session ----------
 $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')

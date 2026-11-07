@@ -38,7 +38,7 @@ function csrf_check(): void {
         header('Content-Type: text/html; charset=utf-8');
         $back = h($_SERVER['HTTP_REFERER'] ?? url('index.php'));
         exit('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page refreshed</title>'
-           . '<link rel="stylesheet" href="' . h(url('assets/style.css')) . '"><body><main style="max-width:520px;margin:12vh auto"><section class="panel">'
+           . '<link rel="stylesheet" href="' . h(asset_url('assets/style.css')) . '"><body><main style="max-width:520px;margin:12vh auto"><section class="panel">'
            . '<h1>This page was refreshed for security</h1><p class="muted">The form was open for a long time, so its security token expired. Nothing was saved. '
            . 'Go back, reload the page and submit again.</p><p style="margin-top:14px"><a class="btn primary" href="' . $back . '">← Go back and reload</a></p></section></main></body>');
     }

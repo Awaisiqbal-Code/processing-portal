@@ -39,7 +39,9 @@ if ($oid && !isset($officerById[$oid])) $oid = 0;
 
 // ---------- students and pending evaluation ----------
 $students = q("SELECT s.*, o.name AS officer_name, fo.name AS fe_user_name,
-                      (SELECT MAX(sr.created_at) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS last_remark_created_at
+                      (SELECT MAX(sr.created_at) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS last_remark_created_at,
+                      (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
+                      (SELECT sr.author_name FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_author_name
                FROM students s
                LEFT JOIN users o ON o.id = s.officer_id
                LEFT JOIN users fo ON fo.id = s.frontend_officer_id
@@ -143,6 +145,19 @@ foreach ($evaluated as $r) {
     foreach (array_unique(array_filter([(int)($r['officer_id'] ?? 0), (int)($r['frontend_officer_id'] ?? 0)])) as $x) {
         if (isset($byOfficer[$x])) $byOfficer[$x][] = $r;
     }
+}
+
+// ---------- PDF download (same cards as on screen) ----------
+if (get('download') === 'pdf' && $oid) {
+    require_once APP . '/pending_report_pdf.php';
+    $o = $officerById[$oid];
+    $bytes = generate_pending_report_pdf($o, summarize_pending($byOfficer[$oid]), officer_work_done($oid, $fromTs, $toTs), $byOfficer[$oid], $from, $to, $u['name']);
+    while (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="Pending_Report_' . preg_replace('/\W+/', '_', $o['name']) . '_' . $from . '_to_' . $to . '.pdf"');
+    header('Content-Length: ' . strlen($bytes));
+    echo $bytes;
+    exit;
 }
 
 // ---------- Excel download ----------
@@ -291,14 +306,39 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
   <?php $oContact = (function () use ($oid) { try { return q('SELECT phone, email FROM users WHERE id = ?', [$oid])->fetch() ?: []; } catch (Throwable) { return []; } })();
         $waShare = wa_link($oContact['phone'] ?? null, $share) ?: 'https://wa.me/?text=' . rawurlencode($share); ?>
   <section class="panel share-panel" id="share">
-    <div class="panel-h"><div><h2>Report to share</h2><p>Read it first. Then copy it, or send it on WhatsApp<?= !empty($oContact['phone']) ? ' straight to ' . h($o['name']) . ' (' . h($oContact['phone']) . ')' : '' ?>.</p></div></div>
-    <pre class="share-preview"><?= h($share) ?></pre>
-    <div class="row-actions no-print">
-      <button type="button" class="btn sm primary" data-copy-text="<?= h($share) ?>">📋 Copy report</button>
-      <a class="btn sm" target="_blank" rel="noopener noreferrer" href="<?= h($waShare) ?>">💬 Share on WhatsApp</a>
-      <a class="btn sm" href="mailto:<?= h($oContact['email'] ?? '') ?>?subject=<?= rawurlencode('Pending report — ' . $o['name']) ?>&body=<?= rawurlencode($share) ?>">✉️ Email</a>
-      <a class="btn sm ghost" href="<?= h($qsBase(['download' => 'xlsx'])) ?>">⬇ Excel (full list)</a>
+    <div class="panel-h">
+      <div><h2>Students still pending — <?= count($pendingRows) ?></h2><p>One card per student, showing only what is missing. Download the same cards as PDF, or copy the text for WhatsApp.</p></div>
+      <div class="row-actions no-print">
+        <a class="btn sm primary" href="<?= h($qsBase(['download' => 'pdf'])) ?>">⬇ Download PDF</a>
+        <button type="button" class="btn sm" data-copy-text="<?= h($share) ?>">📋 Copy text</button>
+        <a class="btn sm" target="_blank" rel="noopener noreferrer" href="<?= h($waShare) ?>">💬 WhatsApp<?= !empty($oContact['phone']) ? ' ' . h($o['name']) : '' ?></a>
+        <a class="btn sm" href="mailto:<?= h($oContact['email'] ?? '') ?>?subject=<?= rawurlencode('Pending report — ' . $o['name']) ?>&body=<?= rawurlencode($share) ?>">✉️ Email</a>
+        <a class="btn sm ghost" href="<?= h($qsBase(['download' => 'xlsx'])) ?>">⬇ Excel</a>
+      </div>
     </div>
+    <?php if (!$pendingRows): ?><div class="empty">✓ Nothing pending — every assigned student is clear.</div><?php else: ?>
+    <div class="rcards">
+      <?php foreach ($pendingRows as $i => $r): $p = $r['_p']; $hrs = $r['_pending_hours']; ?>
+        <article class="rcard <?= $hrs !== null && $hrs >= 48 ? 'is-late' : ($p['docs'] ? 'is-docs' : '') ?>">
+          <header>
+            <span class="rc-n"><?= $i + 1 ?></span>
+            <div class="rc-who"><a href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>"><b><?= h($r['name']) ?></b></a>
+              <div class="small muted"><?= country_flag($r['country'] ?? '') ?> <?= h($r['country'] ?: '—') ?><?= $r['program_level'] ? ' · ' . h($r['program_level']) : '' ?> · <span class="tag-fe">FE</span> <?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: '—') ?> · <span class="tag-be">BE</span> <?= h($r['officer_name'] ?: '—') ?></div></div>
+            <?php if ($hrs !== null): ?><span class="pill sm <?= $hrs >= 48 ? 'bad' : 'warn' ?>" title="Edited without a remark">⏳ <?= $hrs ?>h</span><?php endif; ?>
+          </header>
+          <?php $items = array_values(array_filter($p['task_keys'], fn($k) => $k !== 'docs')); if ($items): ?>
+            <div class="chip-row"><?php foreach ($items as $k): ?><a class="pill sm warn" href="<?= h(url($base . '/pending.php?cat=' . $k . '&sid=' . (int)$r['id'])) ?>#list"><?= h(PENDING_TASKS[$k]) ?></a><?php endforeach; ?></div>
+          <?php endif; ?>
+          <?php if ($p['docs']): ?>
+            <div class="rc-docs"><span class="small bad-t"><b>Documents (<?= $p['docs_count'] ?>)</b></span>
+              <div class="chip-row"><?php foreach ($p['docs_missing'] as $d): ?><span class="doc-chip"><?= h($d) ?></span><?php endforeach; ?></div></div>
+          <?php endif; ?>
+          <?php if (!empty($r['last_remark_text'])): ?><p class="rc-remark small">“<?= h(mb_strimwidth(preg_replace('/\s+/', ' ', (string)$r['last_remark_text']), 0, 160, '…')) ?>”<?= $r['last_remark_author_name'] ? ' <span class="muted">— ' . h($r['last_remark_author_name']) . '</span>' : '' ?></p><?php endif; ?>
+        </article>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <details class="no-print" style="margin-top:12px"><summary class="small">Show the WhatsApp text</summary><pre class="share-preview"><?= h($share) ?></pre></details>
   </section>
 
   <div class="grid2">
@@ -335,39 +375,5 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
     </section>
   </div>
 
-  <section class="panel">
-    <div class="panel-h"><div><h2>📋 Remaining — students still pending (<?= count($pendingRows) ?>)</h2><p>Oldest 48h timers first, then students with the most open items.</p></div></div>
-    <?php if (!$pendingRows): ?>
-      <div class="empty">🎉 Nothing pending for <?= h($o['name']) ?>.</div>
-    <?php else: ?>
-      <div class="tbl tbl-pending"><table>
-        <colgroup><col style="width:52px"><col style="width:200px"><col style="width:150px"><col style="width:260px"><col style="width:280px"><col style="width:120px"><col style="width:90px"></colgroup>
-        <thead><tr><th>SR#</th><th>Student</th><th>Team</th><th>What is pending</th><th>Documents</th><th>Last update</th><th class="no-print"></th></tr></thead>
-        <tbody>
-          <?php foreach ($pendingRows as $r): $p = $r['_p']; ?>
-            <tr>
-              <td class="num"><?= (int)($r['sheet_sr'] ?: $r['id']) ?></td>
-              <td><a href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>"><b><?= h($r['name']) ?></b></a>
-                <div class="small muted"><?= h(($r['country'] ?: '—') . ($r['program_level'] ? ' · ' . $r['program_level'] : '')) ?></div></td>
-              <td class="small">
-                <div class="officer-line"><span class="tag-fe">FE</span> <?= h(($r['fe_user_name'] ?: $r['frontend_officer_name']) ?: '—') ?></div>
-                <div class="officer-line"><span class="tag-be">BE</span> <?= h($r['officer_name'] ?: '—') ?></div>
-              </td>
-              <td><div style="display:flex; gap:4px; flex-wrap:wrap;"><?php foreach ($p['items'] as $it): ?><span class="pill sm <?= str_contains($it, 'Doc') || str_contains($it, 'remark') ? 'bad' : 'warn' ?>"><?= h($it) ?></span><?php endforeach; ?></div></td>
-              <td class="small">
-                <?php if ($p['docs_missing']): ?><div class="chip-row"><?php foreach ($p['docs_missing'] as $dm): ?><span class="doc-chip"><?= h($dm) ?></span><?php endforeach; ?></div>
-                <?php else: ?><span class="pill sm ok">✓ All received</span><?php endif; ?>
-              </td>
-              <td class="small">
-                <?php if ($r['_pending_hours'] !== null): ?><span class="pill sm <?= $r['_pending_hours'] >= 48 ? 'bad' : 'warn' ?>">⏳ <?= $r['_pending_hours'] ?>h</span><?php endif; ?>
-                <div class="muted"><?= $r['_idle_days'] !== null ? ($r['_idle_days'] === 0 ? 'today' : $r['_idle_days'] . ' days ago') : '—' ?></div>
-              </td>
-              <td class="no-print"><a class="btn sm" href="<?= h(url($base . '/student.php?id=' . (int)$r['id'])) ?>">Open</a></td>
-            </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table></div>
-    <?php endif; ?>
-  </section>
 <?php endif; ?>
 <?php page_end();

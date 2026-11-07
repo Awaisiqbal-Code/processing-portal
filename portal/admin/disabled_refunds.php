@@ -73,7 +73,7 @@ page_start('Disabled & Refund Records', $u, PORTALS[$u['role']]['label']);
 </div>
 
 <!-- Tabs -->
-<div style="display:flex; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
+<div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1.25rem; border-bottom:1.5px solid var(--border); padding-bottom:0.5rem;">
   <a class="btn sm <?= $activeTab === 'disabled' ? 'primary' : 'ghost' ?>" href="<?= h(url('admin/disabled_refunds.php?tab=disabled')) ?>">
     Disabled Students <span class="pill sm bad" style="margin-left:0.35rem;"><?= count($disabledList) ?></span>
   </a>
