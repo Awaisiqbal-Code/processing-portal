@@ -144,12 +144,12 @@ page_start('Applications', $u, PORTALS[$u['role']]['label']);
           </div>
         <?php endif; ?>
         <?php if ($c['sent'] && $view !== 'remaining'): ?>
-          <div class="ap-sec"><span class="ap-sec-h ok-t">✅ Submitted (<?= count($c['sent']) ?>)</span>
+          <div class="ap-sec"><span class="ap-sec-h ok-t">✅ Submitted (<?= count($c['sent']) ?>)</span><small class="muted">To change a submitted application, open the student (click the name).</small>
             <?php foreach ($c['sent'] as $a): ?>
               <div class="ap-row">
                 <span class="ap-u"><b><?= h($a['university'] ?: 'University') ?></b><small><?= h($a['program'] ?: '—') ?><?= $a['applied_date'] ? ' · applied ' . h(preg_match('/^\d{4}-\d{2}-\d{2}$/', $a['applied_date']) ? fmt_date($a['applied_date']) : $a['applied_date']) : '' ?></small></span>
                 <span class="pill sm <?= $appTone((string)$a['status']) ?>"><?= h($a['status']) ?></span>
-                <?php if ($canEdit): ?><button class="btn sm ghost" name="action" value="undo" onclick="this.form.querySelectorAll('input[name=&quot;app[]&quot;]').forEach(function(c){c.checked=false});var h=document.createElement('input');h.type='hidden';h.name='app[]';h.value='<?= (int)$a['id'] ?>';this.form.appendChild(h);" title="Move back to shortlisted (if marked by mistake)">↩</button><?php endif; ?>
+
               </div>
             <?php endforeach; ?>
           </div>

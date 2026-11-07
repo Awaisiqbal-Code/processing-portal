@@ -293,6 +293,36 @@ if (is_post() && post('action') === 'update_application_status') {
     redirect($base . "/student.php?id={$id}#applications");
 }
 
+// ---------- full edit of one application / quick "submitted" ----------
+if (is_post() && in_array(post('action'), ['update_application', 'quick_submit_application'], true)) {
+    csrf_check();
+    if ($isCounselor) { http_response_code(403); exit('Access denied.'); }
+    $appId = (int)post('app_id');
+    $ex = q('SELECT * FROM student_applications WHERE id = ? AND student_id = ?', [$appId, $id])->fetch();
+    if (!$ex) { flash('Application not found.', 'bad'); redirect($base . "/student.php?id={$id}#applications"); }
+    if (post('action') === 'quick_submit_application') {
+        q('UPDATE student_applications SET status = ?, applied_date = COALESCE(NULLIF(applied_date, \'\'), ?), submitted_by = COALESCE(NULLIF(submitted_by, \'\'), ?), updated_at = ? WHERE id = ?', ['Applied', date('Y-m-d'), $u['name'], now(), $appId]);
+        log_activity('student', $id, 'application_submitted', ['status' => $ex['status']], ['app_id' => $appId, 'university' => $ex['university'], 'status' => 'Applied'], (int)$u['id']);
+        flash(($ex['university'] ?: 'Application') . ' marked submitted.');
+        redirect($base . "/student.php?id={$id}#app-{$appId}");
+    }
+    $f = fn($k, $max = 255) => ($v = trim(mb_substr((string)post($k), 0, $max))) === '' ? null : $v;
+    $set = [
+        'university' => $f('app_university') ?? $ex['university'], 'program' => $f('app_program'), 'application_type' => $f('app_type', 80),
+        'status' => $f('app_status', 60) ?? 'Shortlisted', 'deadline' => $f('app_deadline', 40), 'applied_date' => $f('app_applied_date', 40),
+        'application_fee' => $f('app_fee', 80), 'nostrification_status' => $f('app_nostrification_status', 80), 'language_req' => $f('app_language_req', 120),
+        'portal_link' => $f('app_portal_link', 500), 'portal_id' => $f('app_portal_id', 120), 'submitted_by' => $f('app_submitted_by', 120), 'remarks' => $f('app_remarks', 1000),
+    ];
+    if (post('app_portal_password') !== null && post('app_portal_password') !== '') $set['portal_password'] = $f('app_portal_password', 200);
+    if (app_is_submitted($set['status']) && !$set['applied_date']) $set['applied_date'] = date('Y-m-d');
+    $cols = implode(', ', array_map(fn($c) => "$c = ?", array_keys($set)));
+    q("UPDATE student_applications SET $cols, updated_at = ? WHERE id = ? AND student_id = ?", array_merge(array_values($set), [now(), $appId, $id]));
+    $changed = array_keys(array_filter($set, fn($v, $k) => (string)$v !== (string)($ex[$k] ?? ''), ARRAY_FILTER_USE_BOTH));
+    log_activity('student', $id, 'application_updated', null, ['app_id' => $appId, 'changed' => implode(', ', $changed)], (int)$u['id']);
+    flash('Application saved.');
+    redirect($base . "/student.php?id={$id}#app-{$appId}");
+}
+
 // ---------- delete university application ----------
 if (is_post() && post('action') === 'delete_application') {
     csrf_check();
@@ -919,120 +949,106 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
 
 <?php if (!$isNew): ?>
 <!-- Multi-Country University Applications & Shortlisted Programs Section -->
+<?php
+  $apSent = array_values(array_filter($studentApps, fn($x) => app_is_submitted($x['status'])));
+  $apLeft = array_values(array_filter($studentApps, fn($x) => app_is_remaining($x['status'])));
+  $apOther = array_values(array_filter($studentApps, fn($x) => !app_is_submitted($x['status']) && !app_is_remaining($x['status'])));
+  $apOffers = count(array_filter($studentApps, fn($x) => preg_match('/offer|accept|enrol|admit/i', (string)$x['status'])));
+  $apRejected = count(array_filter($studentApps, fn($x) => preg_match('/reject|refus/i', (string)$x['status'])));
+  $apTot = count($apSent) + count($apLeft);
+  $apTone = function (string $st): string {
+      if (preg_match('/reject|refus/i', $st)) return 'bad';
+      if (preg_match('/offer|accept|enrol|admit/i', $st)) return 'ok';
+      return app_is_submitted($st) ? 'acc' : 'warn';
+  };
+  $isDate = fn($v) => (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$v);
+  $appCard = function (array $app) use ($id, $isCounselor, $apTone, $isDate, $u): string {
+      $aid = (int)$app['id']; $st = (string)($app['status'] ?: 'Shortlisted');
+      $left = app_is_remaining($st);
+      $late = $left && $isDate($app['deadline'] ?? '') && $app['deadline'] < date('Y-m-d');
+      $soon = $left && $isDate($app['deadline'] ?? '') && !$late && $app['deadline'] <= date('Y-m-d', strtotime('+14 days'));
+      $pl = safe_link($app['portal_link'] ?? null);
+      ob_start(); ?>
+      <article class="pa-card <?= $left ? 'is-left' : 'is-sent' ?>" id="app-<?= $aid ?>">
+        <div class="pa-top">
+          <div class="pa-uni"><b><?= h($app['university'] ?: 'University') ?></b><small><?= h($app['program'] ?: '—') ?></small></div>
+          <span class="pill sm <?= $apTone($st) ?>"><?= h($st) ?></span>
+        </div>
+        <div class="pa-meta">
+          <?php if (!empty($app['application_type'])): ?><span class="pa-tag"><?= h($app['application_type']) ?></span><?php endif; ?>
+          <?php if (!empty($app['deadline'])): ?><span class="pa-tag <?= $late ? 'is-bad' : ($soon ? 'is-warn' : '') ?>" title="Deadline">⏰ <?= h($isDate($app['deadline']) ? fmt_date($app['deadline']) : mb_strimwidth((string)$app['deadline'], 0, 30, '…')) ?><?= $late ? ' · passed' : ($soon ? ' · soon' : '') ?></span><?php endif; ?>
+          <?php if (!empty($app['applied_date'])): ?><span class="pa-tag is-ok">✓ Applied <?= h($isDate($app['applied_date']) ? fmt_date($app['applied_date']) : $app['applied_date']) ?></span><?php endif; ?>
+          <?php if (!empty($app['application_fee'])): ?><span class="pa-tag">💳 <?= h($app['application_fee']) ?></span><?php endif; ?>
+          <?php if (!empty($app['nostrification_status'])): ?><span class="pa-tag">Nostr. <?= h($app['nostrification_status']) ?></span><?php endif; ?>
+          <?php if (!empty($app['language_req'])): ?><span class="pa-tag">🗣 <?= h(mb_strimwidth((string)$app['language_req'], 0, 40, '…')) ?></span><?php endif; ?>
+        </div>
+        <?php if ($pl || !empty($app['portal_id']) || !empty($app['portal_password'])): ?>
+        <div class="pa-portal">
+          <?php if ($pl): ?><a class="btn sm" href="<?= h($pl) ?>" target="_blank" rel="noopener noreferrer">🔗 Portal ↗</a><?php endif; ?>
+          <?php if (!empty($app['portal_id'])): ?><span class="pa-cred">ID <code><?= h($app['portal_id']) ?></code><button type="button" class="pa-copy" data-copy-text="<?= h($app['portal_id']) ?>" title="Copy ID">⧉</button></span><?php endif; ?>
+          <?php if (!empty($app['portal_password']) && !$isCounselor): ?><span class="pa-cred">Password <code data-secret="<?= h($app['portal_password']) ?>">••••••</code><button type="button" class="pa-copy" data-reveal title="Show / hide">👁</button><button type="button" class="pa-copy" data-copy-text="<?= h($app['portal_password']) ?>" title="Copy password">⧉</button></span><?php endif; ?>
+        </div>
+        <?php endif; ?>
+        <?php if (!empty($app['remarks'])): ?><p class="pa-note">“<?= h($app['remarks']) ?>”</p><?php endif; ?>
+        <?php if (!empty($app['submitted_by'])): ?><small class="muted">By <?= h($app['submitted_by']) ?></small><?php endif; ?>
+        <?php if (!$isCounselor): ?>
+        <div class="pa-actions">
+          <?php if ($left): ?>
+            <form method="post"><?= csrf_field() ?><input type="hidden" name="action" value="quick_submit_application"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="app_id" value="<?= $aid ?>"><button class="btn sm primary" type="submit">✓ Mark submitted</button></form>
+          <?php endif; ?>
+          <button type="button" class="btn sm" data-pa-edit>✎ Edit</button>
+        </div>
+        <form method="post" class="pa-edit fields" hidden>
+          <?= csrf_field() ?><input type="hidden" name="action" value="update_application"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="app_id" value="<?= $aid ?>">
+          <label class="f"><span>University</span><input name="app_university" value="<?= h($app['university'] ?? '') ?>" list="dl-unis" required></label>
+          <label class="f"><span>Program</span><input name="app_program" value="<?= h($app['program'] ?? '') ?>" list="dl-progs"></label>
+          <label class="f"><span>Status</span><select name="app_status"><?php if (!in_array($st, APPLICATION_STATUSES, true)): ?><option selected><?= h($st) ?></option><?php endif; ?><?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === $st ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></label>
+          <label class="f"><span>Track / type</span><input name="app_type" value="<?= h($app['application_type'] ?? '') ?>" list="dl-app-types"></label>
+          <label class="f"><span>Deadline</span><input name="app_deadline" value="<?= h($app['deadline'] ?? '') ?>" placeholder="YYYY-MM-DD"></label>
+          <label class="f"><span>Applied on</span><input name="app_applied_date" value="<?= h($app['applied_date'] ?? '') ?>" placeholder="YYYY-MM-DD"></label>
+          <label class="f"><span>Application fee</span><input name="app_fee" value="<?= h($app['application_fee'] ?? '') ?>"></label>
+          <label class="f"><span>Nostrification</span><input name="app_nostrification_status" value="<?= h($app['nostrification_status'] ?? '') ?>"></label>
+          <label class="f"><span>Language requirement</span><input name="app_language_req" value="<?= h($app['language_req'] ?? '') ?>"></label>
+          <label class="f"><span>Portal link</span><input name="app_portal_link" value="<?= h($app['portal_link'] ?? '') ?>" placeholder="https://…"></label>
+          <label class="f"><span>Portal ID</span><input name="app_portal_id" value="<?= h($app['portal_id'] ?? '') ?>"></label>
+          <label class="f"><span>Portal password</span><input name="app_portal_password" placeholder="<?= !empty($app['portal_password']) ? 'saved — leave empty to keep' : '' ?>" autocomplete="off"></label>
+          <label class="f"><span>Submitted by</span><input name="app_submitted_by" value="<?= h($app['submitted_by'] ?? '') ?>"></label>
+          <label class="f wide"><span>Remarks</span><input name="app_remarks" value="<?= h($app['remarks'] ?? '') ?>"></label>
+          <div class="pa-edit-act wide"><button class="btn sm primary" type="submit">Save changes</button><button type="button" class="btn sm ghost" data-pa-edit>Cancel</button>
+            <span style="flex:1"></span>
+            <button class="btn sm danger-ghost" type="submit" form="pa-del-<?= $aid ?>">🗑 Delete application</button></div>
+        </form>
+        <form method="post" id="pa-del-<?= $aid ?>" onsubmit="return confirm('Delete this application for <?= h(addslashes((string)$app['university'])) ?>?');" hidden><?= csrf_field() ?><input type="hidden" name="action" value="delete_application"><input type="hidden" name="id" value="<?= (int)$id ?>"><input type="hidden" name="app_id" value="<?= $aid ?>"></form>
+        <?php endif; ?>
+      </article>
+      <?php return (string)ob_get_clean();
+  };
+?>
 <section class="panel" id="applications" style="margin-top:1.5rem;">
   <div class="panel-h">
-    <div>
-      <h2>🏛 University Applications &amp; Shortlisted Programs (<?= count($studentApps) ?>)</h2>
-      <p>Track university applications, deadlines, fees, nostrification, and application portal credentials for <?= h($r['name']) ?> (<?= h($r['country'] ?: 'Italy') ?>).</p>
-    </div>
-    <div class="row-actions">
-      <a class="btn sm ghost" href="<?= h(url($base . '/programs.php?country=' . rawurlencode((string)($r['country'] ?? '')))) ?>">Browse University Programs Directory →</a>
-    </div>
+    <div><div class="eyebrow">University applications</div><h2>🏛 Shortlisted &amp; submitted</h2>
+      <p>Every university for <?= h($r['name']) ?> — still to submit, submitted, and results. Portal logins are kept with each application.</p></div>
+    <div class="row-actions"><a class="btn sm ghost" href="<?= h(url($base . '/programs.php?country=' . rawurlencode((string)($r['country'] ?? '')))) ?>">University programs →</a></div>
   </div>
-
-  <?php if (empty($studentApps)): ?>
-    <div class="empty" style="margin-bottom:1rem;">No university applications recorded yet for this student.</div>
+  <?php if (!$studentApps): ?>
+    <div class="empty" style="margin-bottom:1rem;">No universities shortlisted yet. Add the first one below.</div>
   <?php else: ?>
-    <div class="tbl" style="margin-bottom:1.25rem;"><table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>University &amp; Program</th>
-          <th>Type / Track</th>
-          <th>Deadline &amp; Applied</th>
-          <th>Fees &amp; Nostrification</th>
-          <th>Portal &amp; Credentials</th>
-          <th>Submitted By</th>
-          <th>Status &amp; Remarks</th>
-          <?php if (!$isCounselor): ?><th>Action</th><?php endif; ?>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($studentApps as $idx => $app):
-            $pLink = safe_link($app['portal_link'] ?? null);
-            $appSt = (string)($app['status'] ?: 'Pending');
-            $stLower = strtolower($appSt);
-            $stPill = (str_contains($stLower, 'admit') || str_contains($stLower, 'offer') || str_contains($stLower, 'accept') || str_contains($stLower, 'done') || str_contains($stLower, 'applied') || str_contains($stLower, 'submit')) ? 'ok' : ((str_contains($stLower, 'reject') || str_contains($stLower, 'refus')) ? 'bad' : 'acc');
-        ?>
-          <tr>
-            <td class="num"><?= $idx + 1 ?></td>
-            <td>
-              <b><?= h($app['university'] ?: 'University') ?></b>
-              <?php if (!empty($app['program'])): ?>
-                <div class="small" style="color:var(--fg); margin-top:0.15rem;"><?= h($app['program']) ?></div>
-              <?php endif; ?>
-              <?php if (!empty($app['language_req'])): ?>
-                <div class="small muted">Lang: <?= h($app['language_req']) ?></div>
-              <?php endif; ?>
-            </td>
-            <td class="small">
-              <span class="pill sm"><?= h($app['country'] ?: ($r['country'] ?? '')) ?></span>
-              <?php if (!empty($app['application_type'])): ?>
-                <div class="muted" style="margin-top:0.2rem;"><?= h($app['application_type']) ?></div>
-              <?php endif; ?>
-            </td>
-            <td class="small">
-              <?php if (!empty($app['deadline'])): ?><div><span class="muted">Deadline:</span> <b><?= h($app['deadline']) ?></b></div><?php endif; ?>
-              <?php if (!empty($app['applied_date'])): ?><div><span class="muted">Applied:</span> <?= h($app['applied_date']) ?></div><?php endif; ?>
-              <?php if (empty($app['deadline']) && empty($app['applied_date'])): ?><span class="muted">—</span><?php endif; ?>
-            </td>
-            <td class="small">
-              <?php if (!empty($app['application_fee'])): ?><div><span class="muted">Fee:</span> <b><?= h($app['application_fee']) ?></b></div><?php endif; ?>
-              <?php if (!empty($app['nostrification_status'])): ?><div><span class="muted">Nostr.:</span> <?= h($app['nostrification_status']) ?></div><?php endif; ?>
-              <?php if (!empty($app['nostrification_fee'])): ?><div><span class="muted">Nostr. Fee:</span> <?= h($app['nostrification_fee']) ?></div><?php endif; ?>
-              <?php if (empty($app['application_fee']) && empty($app['nostrification_status'])): ?><span class="muted">—</span><?php endif; ?>
-            </td>
-            <td class="small">
-              <?php if ($pLink): ?>
-                <div><a href="<?= h($pLink) ?>" target="_blank" rel="noopener noreferrer" class="btn sm" style="padding:0.1rem 0.45rem; font-size:0.74rem;">🔗 Open Portal ↗</a></div>
-              <?php elseif (!empty($app['portal_link'])): ?>
-                <div><?= h($app['portal_link']) ?></div>
-              <?php endif; ?>
-              <?php if (!empty($app['portal_id'])): ?><div><span class="muted">ID:</span> <code><?= h($app['portal_id']) ?></code></div><?php endif; ?>
-              <?php if (!empty($app['portal_password'])): ?><div><span class="muted">Pass:</span> <code><?= h($app['portal_password']) ?></code></div><?php endif; ?>
-            </td>
-            <td class="small"><?= h($app['submitted_by'] ?: '—') ?></td>
-            <td>
-              <?php if (!$isCounselor): ?>
-                <form method="post" style="display:flex; flex-direction:column; gap:0.25rem; min-width:170px;">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="action" value="update_application_status">
-                  <input type="hidden" name="id" value="<?= (int)$id ?>">
-                  <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
-                  <div style="display:flex; gap:0.25rem;">
-                    <select name="app_status" aria-label="Application status" style="font-size:0.78rem; padding:0.2rem 0.4rem; flex:1;">
-                      <?php if (!in_array($appSt, APPLICATION_STATUSES, true)): ?><option selected><?= h($appSt) ?></option><?php endif; ?>
-                      <?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === $appSt ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?>
-                    </select>
-                    <button class="btn sm" type="submit" style="padding:0.15rem 0.45rem; font-size:0.74rem;">Save</button>
-                  </div>
-                  <input name="app_remarks" value="<?= h($app['remarks'] ?? '') ?>" placeholder="Remarks / notes..." style="font-size:0.75rem; padding:0.18rem 0.4rem;">
-                </form>
-              <?php else: ?>
-                <span class="pill sm <?= $stPill ?>"><?= h($appSt) ?></span>
-                <?php if (!empty($app['remarks'])): ?><div class="small muted" style="margin-top:0.2rem;"><?= h($app['remarks']) ?></div><?php endif; ?>
-              <?php endif; ?>
-            </td>
-            <?php if (!$isCounselor): ?>
-              <td>
-                <form method="post" onsubmit="return confirm('Remove this university application?');">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="action" value="delete_application">
-                  <input type="hidden" name="id" value="<?= (int)$id ?>">
-                  <input type="hidden" name="app_id" value="<?= (int)$app['id'] ?>">
-                  <button class="btn sm bad" type="submit" style="padding:0.15rem 0.45rem; font-size:0.74rem;" title="Delete Application">🗑</button>
-                </form>
-              </td>
-            <?php endif; ?>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table></div>
+    <div class="pa-sum">
+      <span class="pa-stat"><b><?= count($studentApps) ?></b> universities</span>
+      <span class="pa-stat ok"><b><?= count($apSent) ?></b> submitted</span>
+      <span class="pa-stat warn"><b><?= count($apLeft) ?></b> still to submit</span>
+      <?php if ($apOffers): ?><span class="pa-stat ok"><b><?= $apOffers ?></b> offers</span><?php endif; ?>
+      <?php if ($apRejected): ?><span class="pa-stat bad"><b><?= $apRejected ?></b> rejected</span><?php endif; ?>
+      <div class="pa-progress" title="<?= $apTot ? round(count($apSent) / $apTot * 100) : 0 ?>% submitted"><i style="width:<?= $apTot ? round(count($apSent) / $apTot * 100) : 0 ?>%"></i></div>
+    </div>
+    <?php if ($apLeft): ?><h3 class="pa-h warn-t">📝 Still to submit (<?= count($apLeft) ?>)</h3><div class="pa-grid"><?php foreach ($apLeft as $app) echo $appCard($app); ?></div><?php endif; ?>
+    <?php if ($apSent): ?><h3 class="pa-h ok-t">✅ Submitted (<?= count($apSent) ?>)</h3><div class="pa-grid"><?php foreach ($apSent as $app) echo $appCard($app); ?></div><?php endif; ?>
+    <?php if ($apOther): ?><h3 class="pa-h muted">Withdrawn (<?= count($apOther) ?>)</h3><div class="pa-grid"><?php foreach ($apOther as $app) echo $appCard($app); ?></div><?php endif; ?>
   <?php endif; ?>
 
   <?php if (!$isCounselor): ?>
   <details style="background:var(--sunk); border:1px solid var(--border); border-radius:6px; padding:0.85rem 1rem;">
-    <summary style="cursor:pointer; font-weight:600; font-size:0.9rem;">➕ Add New University Application for <?= h($r['name']) ?></summary>
+    <summary style="cursor:pointer; font-weight:700; font-size:0.9rem;">➕ Add a university</summary>
     <form method="post" class="fields" style="margin-top:0.85rem;">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="add_application">
@@ -1049,9 +1065,9 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
       <datalist id="dl-progs"><?php foreach ($progList as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
       <label class="f"><span>Application Track / Type</span><input name="app_type" list="dl-app-types" placeholder="e.g. Campus France, Uni-Assist, Direct"></label>
       <datalist id="dl-app-types"><?php foreach (APPLICATION_TYPES as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
-      <label class="f"><span>Status</span><select name="app_status"><?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === 'Applied' ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></label>
+      <label class="f"><span>Status</span><select name="app_status"><?php foreach (APPLICATION_STATUSES as $o): ?><option <?= $o === 'Shortlisted' ? 'selected' : '' ?>><?= h($o) ?></option><?php endforeach; ?></select></label>
       <label class="f"><span>Deadline</span><input type="date" name="app_deadline"></label>
-      <label class="f"><span>Applied Date</span><input type="date" name="app_applied_date" value="<?= h(date('Y-m-d')) ?>"></label>
+      <label class="f"><span>Applied Date</span><input type="date" name="app_applied_date"></label>
       <label class="f"><span>Application Fee</span><input name="app_fee" placeholder="e.g. 60 EUR - Paid"></label>
       <label class="f"><span>Nostrification Status</span><input name="app_nostrification_status" placeholder="e.g. Paid / Waived / Pending"></label>
       <label class="f"><span>Portal URL</span><input name="app_portal_link" placeholder="https://..."></label>

@@ -1093,3 +1093,18 @@ document.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('[data-ap-all]') : null;
   if (b) { var d = b.closest('form').querySelector('.ap-more'); if (d) d.open = true; }
 }, true);
+
+/* ---- Profile applications: edit toggle, reveal portal password ---- */
+document.addEventListener('click', function (e) {
+  var b = e.target.closest ? e.target.closest('[data-pa-edit]') : null;
+  if (b) {
+    var card = b.closest('.pa-card'); var f = card && card.querySelector('.pa-edit');
+    if (f) { f.hidden = !f.hidden; card.classList.toggle('is-editing', !f.hidden); if (!f.hidden) { var i = f.querySelector('input:not([type=hidden])'); if (i) i.focus(); } }
+    return;
+  }
+  var r = e.target.closest ? e.target.closest('[data-reveal]') : null;
+  if (r) {
+    var c = r.parentElement.querySelector('[data-secret]');
+    if (c) c.textContent = c.textContent.indexOf('•') === 0 ? c.getAttribute('data-secret') : '••••••';
+  }
+});
