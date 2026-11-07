@@ -320,54 +320,13 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
     </div>
   </div>
 
-  <!-- Country Quick-Tabs -->
-  <div style="display:flex; gap:0.45rem; padding-bottom:0.65rem; margin-bottom:0.65rem; border-bottom:1px dashed var(--border); flex-wrap:wrap; align-items:center;">
-    <span class="small muted" style="font-weight:600; margin-right:0.25rem;">🌍 Country:</span>
-    <a href="<?= h($qs(['country' => '', 'page' => 1])) ?>" class="btn sm <?= $fc === '' ? 'primary' : 'ghost' ?>">
-      All Countries <span class="pill sm" style="margin-left:0.3rem;"><?= $cntAll ?></span>
-    </a>
-    <?php
-      $flagMap = country_flags_map();
-      foreach ($countryCounts as $cName => $cCnt):
-          if ($cName === 'Not set') continue;
-          $flag = $flagMap[$cName] ?? '📍';
-    ?>
-      <a href="<?= h($qs(['country' => $cName, 'page' => 1])) ?>" class="btn sm <?= $fc === $cName ? 'primary' : 'ghost' ?>">
-        <?= $flag ?> <?= h($cName) ?> <span class="pill sm" style="margin-left:0.3rem;"><?= $cCnt ?></span>
-      </a>
-    <?php endforeach; ?>
-  </div>
-
-  <!-- Phase 3: Program Level Tabs (All | BS | MS | Incomplete) -->
-  <div style="display:flex; gap:0.5rem; border-bottom:1.5px solid var(--border); padding-bottom:0.6rem; margin-bottom:0.85rem; flex-wrap:wrap; align-items:center;">
-    <span class="small muted" style="font-weight:600; margin-right:0.25rem;">🎓 Degree:</span>
-    <a href="<?= h($qs(['tab' => 'all', 'page' => 1])) ?>" class="btn sm <?= $tab === 'all' ? 'primary' : 'ghost' ?>">
-      All Degrees <span class="pill sm" style="margin-left:0.35rem;"><?= $cntAll ?></span>
-    </a>
-    <a href="<?= h($qs(['tab' => 'bs', 'page' => 1])) ?>" class="btn sm <?= $tab === 'bs' ? 'primary' : 'ghost' ?>">
-      BS (Bachelors) <span class="pill sm" style="margin-left:0.35rem;"><?= $cntBs ?></span>
-    </a>
-    <a href="<?= h($qs(['tab' => 'ms', 'page' => 1])) ?>" class="btn sm <?= $tab === 'ms' ? 'primary' : 'ghost' ?>">
-      MS (Masters) <span class="pill sm" style="margin-left:0.35rem;"><?= $cntMs ?></span>
-    </a>
-    <a href="<?= h($qs(['tab' => 'incomplete', 'page' => 1])) ?>" class="btn sm <?= $tab === 'incomplete' ? 'primary' : 'ghost' ?>">
-      Incomplete <span class="pill sm warn" style="margin-left:0.35rem;"><?= $cntInc ?></span>
-    </a>
-  </div>
-
-  <!-- Order-style processing status chips -->
-  <div class="status-chips">
-    <a href="<?= h($qs(['pstatus' => null, 'page' => 1])) ?>" class="status-chip <?= $fps === '' ? 'on' : '' ?>">All <b><?= array_sum($statusCounts) ?></b></a>
-    <?php foreach (PROCESSING_STATUSES as $psOpt): ?>
-      <a href="<?= h($qs(['pstatus' => $psOpt, 'page' => 1])) ?>" class="status-chip <?= processing_status_class($psOpt) ?> <?= $fps === $psOpt ? 'on' : '' ?>"><i></i><?= h($psOpt) ?> <b><?= $statusCounts[$psOpt] ?></b></a>
-    <?php endforeach; ?>
-  </div>
-
   <?php
+    $flagMap = country_flags_map();
+    $moreCount = count(array_filter([$fst, $fv, $fref, $fp, $fcounselor, $fpms, $fo !== '' && $canFilterOfficer ? $fo : '', $fs], fn($v) => $v !== ''));
     $activeFilters = [];
     if ($tab !== 'all') $activeFilters['tab'] = 'Degree: ' . strtoupper($tab);
     if ($fc !== '')     $activeFilters['country'] = 'Country: ' . ($fc === 'none' ? 'Not set' : $fc);
-    if ($fq !== '')     $activeFilters['q'] = 'Search: "' . $fq . '"';
+    if ($fq !== '')     $activeFilters['q'] = 'Search: “' . $fq . '”';
     if ($fo !== '')     $activeFilters['officer'] = 'Officer: ' . ($filteredOfficerName ?? $fo);
     if ($fcounselor !== '') {
         $cnLabel = $fcounselor;
@@ -375,138 +334,119 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
         $activeFilters['counselor'] = 'Counselor: ' . $cnLabel;
     }
     if ($fpms !== '')   $activeFilters['pms_lead'] = 'PMS Lead';
-    if ($fst !== '')    $activeFilters['status'] = 'Status: ' . ucfirst($fst);
+    if ($fst !== '')    $activeFilters['status'] = 'Account: ' . ucfirst($fst);
     if ($fv !== '')     $activeFilters['verified'] = $fv === '1' ? 'Verified' : 'Unverified';
-    if ($fref !== '')   $activeFilters['refunded'] = $fref === '1' ? 'Refunded' : 'Not Refunded';
-    if ($fp !== '')     $activeFilters['pending'] = $fp === '1' ? 'Pending Action' : 'Up to date';
+    if ($fref !== '')   $activeFilters['refunded'] = $fref === '1' ? 'Refunded' : 'Not refunded';
+    if ($fp !== '')     $activeFilters['pending'] = $fp === '1' ? 'Remark due' : 'Up to date';
     if ($finc !== '')   $activeFilters['incomplete'] = $finc === '1' ? 'Incomplete' : 'Complete';
     if ($fr !== '')     $activeFilters['refund'] = 'Refund: ' . $fr;
-    if ($fs !== '')     $activeFilters['stage'] = 'Next Step: ' . $fs;
+    if ($fs !== '')     $activeFilters['stage'] = 'Next step: ' . $fs;
     if ($fps !== '')    $activeFilters['pstatus'] = 'Status: ' . $fps;
     if ($fjnow !== '' && isset(JOURNEY_STAGES[$fjnow])) $activeFilters['jnow'] = 'Now at: ' . JOURNEY_STAGES[$fjnow][0];
     if ($fk !== '')     $activeFilters['kpi'] = 'KPI: ' . ucfirst(str_replace('_', ' ', $fk));
-    if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Stage Done: ' . STAGES[(int)$fd][0];
+    if ($fd !== '' && isset(STAGES[(int)$fd])) $activeFilters['done_stage'] = 'Step done: ' . STAGES[(int)$fd][0];
   ?>
-  <?php if (!empty($activeFilters)): ?>
-  <div style="background:var(--accent-soft); border:1.5px solid var(--brand-trust); border-radius:10px; padding:0.55rem 0.9rem; margin-bottom:0.85rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.5rem;">
-    <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap;">
-      <span class="small" style="font-weight:700; color:var(--accent);">🔍 Active Filters (Showing <?= $total ?> of <?= $cntAll ?> students):</span>
-      <?php foreach ($activeFilters as $fKey => $fLabel):
-          $clearParam = ($fKey === 'tab') ? ['tab' => 'all', 'page' => 1] : [$fKey => null, 'page' => 1];
-      ?>
-        <a href="<?= h($qs($clearParam)) ?>" class="pill sm acc" style="text-decoration:none; display:inline-flex; align-items:center; gap:4px;" title="Click to remove this filter">
-          <?= h($fLabel) ?> <b>✕</b>
-        </a>
-      <?php endforeach; ?>
-    </div>
-    <a class="btn sm primary" href="<?= h(url($base . '/students.php')) ?>">✕ Clear All Filters (Show All <?= $cntAll ?>)</a>
-  </div>
-  <?php endif; ?>
 
-  <!-- Advanced Filtering Toolbar -->
-  <form method="get" action="<?= h(url($base . '/students.php')) ?>" class="toolbar" style="gap:0.45rem; flex-wrap:wrap; align-items:center;">
+  <form method="get" action="<?= h(url($base . '/students.php')) ?>" class="sf" id="student-filters">
     <input type="hidden" name="tab" value="<?= h($tab) ?>">
     <input type="hidden" name="view" value="<?= h($view) ?>">
+    <?php if ($fc !== ''): ?><input type="hidden" name="country" value="<?= h($fc) ?>"><?php endif; ?>
     <?php if ($fps !== ''): ?><input type="hidden" name="pstatus" value="<?= h($fps) ?>"><?php endif; ?>
     <?php if ($fo !== '' && !$canFilterOfficer): ?><input type="hidden" name="officer" value="<?= h($fo) ?>"><?php endif; ?>
-    <input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search name, SR#, email, counselor..." aria-label="Search" style="min-width:200px;">
+    <?php foreach (['jnow' => $fjnow, 'kpi' => $fk, 'incomplete' => $finc, 'refund' => $fr, 'done_stage' => $fd] as $hk => $hv): if ($hv !== ''): ?><input type="hidden" name="<?= $hk ?>" value="<?= h($hv) ?>"><?php endif; endforeach; ?>
 
-    <!-- Country Filter -->
-    <select name="country" aria-label="Country" data-autosubmit>
-      <option value="">All Countries</option>
-      <?php foreach ($distinctCountries as $cOpt): ?>
-        <option value="<?= h($cOpt) ?>" <?= $fc === $cOpt ? 'selected' : '' ?>><?= h($cOpt) ?></option>
-      <?php endforeach; ?>
-      <option value="none" <?= $fc === 'none' ? 'selected' : '' ?>>Not set (Incomplete)</option>
-    </select>
+    <!-- 1. Search + sort -->
+    <div class="sf-top">
+      <label class="sf-search"><span aria-hidden="true">⌕</span><input type="search" name="q" value="<?= h($fq) ?>" placeholder="Search name, SR#, email, phone, counselor…" aria-label="Search students"></label>
+      <select name="sort" aria-label="Sort" data-autosubmit class="sf-sort">
+        <?php foreach (['default' => 'Sort: SR#', 'last_remark_desc' => 'Latest remark first', 'last_remark_asc' => 'Oldest remark first', 'last_edited_desc' => 'Recently edited', 'last_edited_asc' => 'Least recently edited', 'name_asc' => 'Name A–Z', 'name_desc' => 'Name Z–A', 'received_desc' => 'Newest registration', 'received_asc' => 'Oldest registration'] as $sk => $sl): ?>
+          <option value="<?= $sk ?>" <?= $sort === $sk ? 'selected' : '' ?>><?= h($sl) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <button type="button" class="btn sm sf-more-btn <?= $moreCount ? 'on' : '' ?>" data-sf-more aria-expanded="<?= $moreCount ? 'true' : 'false' ?>">⚙ More filters<?= $moreCount ? ' <b>' . $moreCount . '</b>' : '' ?></button>
+    </div>
 
-    <!-- Status Filter -->
-    <select name="status" aria-label="Status" data-autosubmit>
-      <option value="">All Statuses</option>
-      <option value="active" <?= $fst === 'active' ? 'selected' : '' ?>>Active</option>
-      <option value="inactive" <?= $fst === 'inactive' ? 'selected' : '' ?>>Inactive</option>
-      <option value="disabled" <?= $fst === 'disabled' ? 'selected' : '' ?>>Disabled</option>
-    </select>
+    <!-- 2. Country (one place only) -->
+    <div class="sf-row" role="group" aria-label="Country">
+      <span class="sf-label">Country</span>
+      <div class="seg-chips">
+        <a href="<?= h($qs(['country' => '', 'page' => 1])) ?>" class="<?= $fc === '' ? 'on' : '' ?>">All <b><?= $cntAll ?></b></a>
+        <?php foreach ($countryCounts as $cName => $cCnt): if ($cName === 'Not set') continue; ?>
+          <a href="<?= h($qs(['country' => $cName, 'page' => 1])) ?>" class="<?= $fc === $cName ? 'on' : '' ?>"><?= $flagMap[$cName] ?? '' ?> <?= h($cName) ?> <b><?= $cCnt ?></b></a>
+        <?php endforeach; ?>
+        <?php if (!empty($countryCounts['Not set'])): ?><a href="<?= h($qs(['country' => 'none', 'page' => 1])) ?>" class="<?= $fc === 'none' ? 'on' : '' ?>">Not set <b><?= (int)$countryCounts['Not set'] ?></b></a><?php endif; ?>
+      </div>
+    </div>
 
-    <!-- Verified Filter -->
-    <select name="verified" aria-label="Verified" data-autosubmit>
-      <option value="">Verification: All</option>
-      <option value="1" <?= $fv === '1' ? 'selected' : '' ?>>✓ Verified</option>
-      <option value="0" <?= $fv === '0' ? 'selected' : '' ?>>Unverified</option>
-    </select>
+    <!-- 3. Degree + processing status -->
+    <div class="sf-row" role="group" aria-label="Degree and status">
+      <span class="sf-label">Degree</span>
+      <div class="seg-chips">
+        <a href="<?= h($qs(['tab' => 'all', 'page' => 1])) ?>" class="<?= $tab === 'all' ? 'on' : '' ?>">All <b><?= $cntAll ?></b></a>
+        <a href="<?= h($qs(['tab' => 'bs', 'page' => 1])) ?>" class="<?= $tab === 'bs' ? 'on' : '' ?>">BS <b><?= $cntBs ?></b></a>
+        <a href="<?= h($qs(['tab' => 'ms', 'page' => 1])) ?>" class="<?= $tab === 'ms' ? 'on' : '' ?>">MS <b><?= $cntMs ?></b></a>
+        <?php if ($cntInc): ?><a href="<?= h($qs(['tab' => 'incomplete', 'page' => 1])) ?>" class="<?= $tab === 'incomplete' ? 'on' : '' ?>">Level not set <b><?= $cntInc ?></b></a><?php endif; ?>
+      </div>
+      <span class="sf-label sf-gap">Status</span>
+      <div class="status-chips sf-status">
+        <a href="<?= h($qs(['pstatus' => null, 'page' => 1])) ?>" class="status-chip <?= $fps === '' ? 'on' : '' ?>">All <b><?= array_sum($statusCounts) ?></b></a>
+        <?php foreach (PROCESSING_STATUSES as $psOpt): if (!$statusCounts[$psOpt] && $fps !== $psOpt) continue; ?>
+          <a href="<?= h($qs(['pstatus' => $psOpt, 'page' => 1])) ?>" class="status-chip <?= processing_status_class($psOpt) ?> <?= $fps === $psOpt ? 'on' : '' ?>"><i></i><?= h($psOpt) ?> <b><?= $statusCounts[$psOpt] ?></b></a>
+        <?php endforeach; ?>
+      </div>
+    </div>
 
-    <!-- Refunded Filter -->
-    <select name="refunded" aria-label="Refunded" data-autosubmit>
-      <option value="">Refunded: All</option>
-      <option value="1" <?= $fref === '1' ? 'selected' : '' ?>>Refunded</option>
-      <option value="0" <?= $fref === '0' ? 'selected' : '' ?>>Not Refunded</option>
-    </select>
-
-    <!-- Pending Filter -->
-    <select name="pending" aria-label="Pending" data-autosubmit>
-      <option value="">Pending: All</option>
-      <option value="1" <?= $fp === '1' ? 'selected' : '' ?>>⚠ Pending Action</option>
-      <option value="0" <?= $fp === '0' ? 'selected' : '' ?>>Up to date</option>
-    </select>
-
-    <!-- Counselor Filter (Visible to staff who have broader visibility) -->
-    <?php if ($u['role'] !== 'counselor'): ?>
-    <select name="counselor" aria-label="Counselor" data-autosubmit>
-      <option value="">All Counselors</option>
-      <?php foreach ($counselorsList as $cl): ?>
-        <option value="<?= $cl['id'] ?>" <?= $fcounselor === (string)$cl['id'] ? 'selected' : '' ?>><?= h($cl['name']) ?></option>
-      <?php endforeach; ?>
-    </select>
-    <?php endif; ?>
-
-    <!-- PMS Lead Filter -->
-    <?php if ($admin): ?>
-    <select name="pms_lead" aria-label="PMS Lead" data-autosubmit>
-      <option value="">All PMS Leads</option>
-      <?php foreach ($pmsLeadsList as $pLead): ?>
-        <option value="<?= $pLead['id'] ?>" <?= $fpms === (string)$pLead['id'] ? 'selected' : '' ?>><?= h($pLead['name']) ?></option>
-      <?php endforeach; ?>
-    </select>
-    <?php endif; ?>
-
-    <!-- Officer Filter -->
-    <?php if ($canFilterOfficer): ?>
-    <select name="officer" aria-label="Officer" data-autosubmit>
-      <option value="">All officers (FE &amp; BE)</option>
-      <optgroup label="Front End Processing Officers">
-        <?php foreach ($officers as $o): if ($o['department'] !== 'frontend') continue; ?><option value="<?= $o['id'] ?>" <?= $fo === (string)$o['id'] ? 'selected' : '' ?>><?= h($o['name']) ?> (Front End)</option><?php endforeach; ?>
-      </optgroup>
-      <optgroup label="Back End Processing Officers">
-        <?php foreach ($officers as $o): if ($o['department'] === 'frontend') continue; ?><option value="<?= $o['id'] ?>" <?= $fo === (string)$o['id'] ? 'selected' : '' ?>><?= h($o['name']) ?> (Back End)</option><?php endforeach; ?>
-      </optgroup>
-      <option value="none" <?= $fo === 'none' ? 'selected' : '' ?>>Not assigned</option>
-    </select>
-    <?php endif; ?>
-
-    <!-- Stage / Next step -->
-    <select name="stage" aria-label="Next step" data-autosubmit>
-      <option value="">Any next step</option>
-      <?php foreach (STAGES as $s): ?><option <?= $fs === $s[0] ? 'selected' : '' ?>><?= h($s[0]) ?></option><?php endforeach; ?>
-      <option value="closed" <?= $fs === 'closed' ? 'selected' : '' ?>>Closed</option>
-    </select>
-
-    <!-- Sort Dropdown -->
-    <select name="sort" aria-label="Sort By" data-autosubmit>
-      <option value="default" <?= $sort === 'default' ? 'selected' : '' ?>>Sort: Default (SR#)</option>
-      <option value="last_remark_desc" <?= $sort === 'last_remark_desc' ? 'selected' : '' ?>>Sort: Last Remark (Newest)</option>
-      <option value="last_remark_asc" <?= $sort === 'last_remark_asc' ? 'selected' : '' ?>>Sort: Last Remark (Oldest)</option>
-      <option value="last_edited_desc" <?= $sort === 'last_edited_desc' ? 'selected' : '' ?>>Sort: Last Edited (Newest)</option>
-      <option value="last_edited_asc" <?= $sort === 'last_edited_asc' ? 'selected' : '' ?>>Sort: Last Edited (Oldest)</option>
-      <option value="name_asc" <?= $sort === 'name_asc' ? 'selected' : '' ?>>Sort: Name (A-Z)</option>
-      <option value="name_desc" <?= $sort === 'name_desc' ? 'selected' : '' ?>>Sort: Name (Z-A)</option>
-      <option value="received_desc" <?= $sort === 'received_desc' ? 'selected' : '' ?>>Sort: Registration Date (Newest)</option>
-      <option value="received_asc" <?= $sort === 'received_asc' ? 'selected' : '' ?>>Sort: Registration Date (Oldest)</option>
-    </select>
-
-    <button class="btn sm" type="submit">Apply</button>
-    <a class="btn sm ghost" href="<?= h(url($base . '/students.php')) ?>">Reset All</a>
-    <span class="count num" style="margin-left:auto;"><?= $total ?> students</span>
+    <!-- 4. Everything else, folded away -->
+    <div class="sf-more" data-sf-panel <?= $moreCount ? '' : 'hidden' ?>>
+      <?php if ($canFilterOfficer): ?>
+      <label class="f"><span>Processing officer</span>
+        <select name="officer" aria-label="Processing officer" data-autosubmit>
+          <option value="">Any processing officer</option>
+          <optgroup label="Front End"><?php foreach ($officers as $o): if ($o['department'] !== 'frontend') continue; ?><option value="<?= $o['id'] ?>" <?= $fo === (string)$o['id'] ? 'selected' : '' ?>><?= h($o['name']) ?></option><?php endforeach; ?></optgroup>
+          <optgroup label="Back End"><?php foreach ($officers as $o): if ($o['department'] === 'frontend') continue; ?><option value="<?= $o['id'] ?>" <?= $fo === (string)$o['id'] ? 'selected' : '' ?>><?= h($o['name']) ?></option><?php endforeach; ?></optgroup>
+          <option value="none" <?= $fo === 'none' ? 'selected' : '' ?>>Not assigned</option>
+        </select>
+      </label>
+      <?php endif; ?>
+      <?php if ($u['role'] !== 'counselor'): ?>
+      <label class="f"><span>Counselor</span>
+        <select name="counselor" aria-label="Counselor" data-autosubmit><option value="">Any counselor</option>
+          <?php foreach ($counselorsList as $cl): ?><option value="<?= $cl['id'] ?>" <?= $fcounselor === (string)$cl['id'] ? 'selected' : '' ?>><?= h($cl['name']) ?></option><?php endforeach; ?>
+        </select></label>
+      <?php endif; ?>
+      <?php if ($admin && count($pmsLeadsList) > 1): ?>
+      <label class="f"><span>PMS Lead</span>
+        <select name="pms_lead" aria-label="PMS Lead" data-autosubmit><option value="">Any lead</option>
+          <?php foreach ($pmsLeadsList as $pLead): ?><option value="<?= $pLead['id'] ?>" <?= $fpms === (string)$pLead['id'] ? 'selected' : '' ?>><?= h($pLead['name']) ?></option><?php endforeach; ?>
+        </select></label>
+      <?php endif; ?>
+      <label class="f"><span>Next step</span>
+        <select name="stage" aria-label="Next step" data-autosubmit><option value="">Any</option>
+          <?php foreach (STAGES as $st): ?><option <?= $fs === $st[0] ? 'selected' : '' ?>><?= h($st[0]) ?></option><?php endforeach; ?>
+          <option value="closed" <?= $fs === 'closed' ? 'selected' : '' ?>>Closed</option>
+        </select></label>
+      <label class="f"><span>Account</span>
+        <select name="status" aria-label="Account status" data-autosubmit><option value="">Any</option>
+          <?php foreach (['active' => 'Active', 'inactive' => 'Inactive', 'disabled' => 'Disabled'] as $k => $l): ?><option value="<?= $k ?>" <?= $fst === $k ? 'selected' : '' ?>><?= $l ?></option><?php endforeach; ?>
+        </select></label>
+      <label class="f"><span>Staff remark</span>
+        <select name="pending" aria-label="Remark due" data-autosubmit><option value="">Any</option><option value="1" <?= $fp === '1' ? 'selected' : '' ?>>⚠ Remark due</option><option value="0" <?= $fp === '0' ? 'selected' : '' ?>>Up to date</option></select></label>
+      <label class="f"><span>Verification</span>
+        <select name="verified" aria-label="Verification" data-autosubmit><option value="">Any</option><option value="1" <?= $fv === '1' ? 'selected' : '' ?>>Verified</option><option value="0" <?= $fv === '0' ? 'selected' : '' ?>>Not verified</option></select></label>
+      <label class="f"><span>Refund</span>
+        <select name="refunded" aria-label="Refund" data-autosubmit><option value="">Any</option><option value="1" <?= $fref === '1' ? 'selected' : '' ?>>Refunded</option><option value="0" <?= $fref === '0' ? 'selected' : '' ?>>Not refunded</option></select></label>
+      <noscript><button class="btn sm" type="submit">Apply</button></noscript>
+    </div>
   </form>
+
+  <!-- Active filters: the one place to see and clear them -->
+  <div class="sf-active">
+    <span class="sf-count"><b><?= $total ?></b> of <?= $cntAll ?> students</span>
+    <?php foreach ($activeFilters as $fKey => $fLabel): $clearParam = ($fKey === 'tab') ? ['tab' => 'all', 'page' => 1] : [$fKey => null, 'page' => 1]; ?>
+      <a href="<?= h($qs($clearParam)) ?>" class="sf-pill" title="Remove this filter"><?= h($fLabel) ?> <b aria-hidden="true">×</b></a>
+    <?php endforeach; ?>
+    <?php if ($activeFilters): ?><a class="sf-clear" href="<?= h(url($base . '/students.php?view=' . $view)) ?>">Clear all</a><?php endif; ?>
+  </div>
 
   <?php if (!$rows): ?>
     <div class="empty" style="margin-top:1.5rem;">No students match the selected filters. Clear filters or switch tabs.</div>
@@ -514,11 +454,11 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
 
   <!-- Phase 3: Bulk Edit Bar (Super Admin, Admin, PMS Lead only) -->
   <?php if ($canManage): ?>
-  <form method="post" id="bulk-edit-form" style="margin-top:1rem; margin-bottom:0.75rem;">
+  <form method="post" id="bulk-edit-form">
     <?= csrf_field() ?>
     <input type="hidden" name="action" value="bulk_edit">
-    <div style="background:var(--sunk); border:1px solid var(--border); border-radius:6px; padding:0.6rem 0.85rem; display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
-      <span style="font-weight:600; font-size:0.85rem;">⚡ Bulk Edit (<span id="bulk-selected-count">0</span> selected):</span>
+    <div class="bulk-bar" id="bulk-bar" hidden>
+      <span class="bulk-n"><b id="bulk-selected-count">0</b> selected</span>
       
       <select name="bulk_program_level" style="font-size:0.82rem; padding:0.25rem 0.5rem;">
         <option value="">Program Level: Keep unchanged</option>
@@ -534,7 +474,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
       </datalist>
 
       <button class="btn sm primary" type="submit" id="bulk-submit-btn" disabled onclick="return confirm('Apply bulk update to all selected students? This will not trigger notifications or mark records as pending.');">Apply to Selected</button>
-      <span class="small muted" style="margin-left:auto;">Bulk updates do not change Last Edited or fire notifications.</span>
+      <button type="button" class="btn sm ghost" onclick="document.querySelectorAll('.student-checkbox, [onclick*=toggleSelectAll]').forEach(function(b){b.checked=false});updateBulkCount();">Clear selection</button>
     </div>
   <?php endif; ?>
 
@@ -723,6 +663,7 @@ page_start($admin ? 'Students' : ($u['role'] === 'counselor' ? 'My Caseload' : '
       var submitBtn = document.getElementById('bulk-submit-btn');
       if (countSpan) countSpan.textContent = checked;
       if (submitBtn) submitBtn.disabled = (checked === 0);
+      var bar = document.getElementById('bulk-bar'); if (bar) bar.hidden = (checked === 0);
     }
   </script>
   <?php endif; ?>

@@ -1,14 +1,18 @@
 <?php
 declare(strict_types=1);
-// Streams a meeting recording uploaded on a student's profile (staff only, scope-checked, supports seeking).
+// Streams a meeting recording uploaded on a student's profile (staff in scope, or the student themself; supports seeking).
 
 require_once __DIR__ . '/app/bootstrap.php';
 
 $u = current_user();
-if (!$u || $u['role'] === 'student') { http_response_code(403); exit('Access denied.'); }
+if (!$u) { http_response_code(403); exit('Access denied.'); }
 
 $id = (int)($_GET['id'] ?? 0);
-if (is_admin_role($u['role'])) {
+if ($u['role'] === 'student') {
+    // a student can watch only their own recording
+    if ((int)($u['student_id'] ?? 0) !== $id) { http_response_code(403); exit('Access denied.'); }
+    $s = q('SELECT id, meeting_video_path, meeting_video_name FROM students WHERE id = ?', [$id])->fetch();
+} elseif (is_admin_role($u['role'])) {
     $s = q('SELECT id, meeting_video_path, meeting_video_name FROM students WHERE id = ?', [$id])->fetch();
 } else {
     [$w, $p] = scope_sql($u, 's');

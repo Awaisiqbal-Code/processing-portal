@@ -1,455 +1,247 @@
 <?php
 declare(strict_types=1);
-// Student portal view. Expects $u, $sid (student id) and $preview (true when an admin is looking).
+// Student portal ("My file"). Expects $u, $sid (student id) and $preview (true when staff are looking).
+// Same data and rules as the staff side: journey, pending documents, payments, meeting, applications.
 
 require_once __DIR__ . '/../drive_resolver.php';
 
-// Auto-resolve specific Google Drive files and recorded meeting link if not cached yet
 $driveAssets = resolve_student_drive_assets((int)$sid);
 $allDriveFiles = $driveAssets['files'] ?? [];
 
-$r = q('SELECT s.*,
-               o.name AS officer_name,
-               COALESCE(fo.name, s.frontend_officer_name) AS frontend_officer_name
+$r = q('SELECT s.*, o.name AS officer_name, o.phone AS officer_phone, o.email AS officer_email,
+               COALESCE(fo.name, s.frontend_officer_name) AS frontend_officer_name, fo.phone AS fe_phone, fo.email AS fe_email,
+               cu.phone AS counselor_phone
         FROM students s
         LEFT JOIN users o ON o.id = s.officer_id
         LEFT JOIN users fo ON fo.id = s.frontend_officer_id
+        LEFT JOIN users cu ON cu.id = s.assigned_counselor_id
         WHERE s.id = ?', [$sid])->fetch();
 if (!$r) {
     if ($preview) { http_response_code(404); exit('Student not found.'); }
     logout_now('student'); flash('Your file could not be found. Contact the office.', 'bad'); redirect('student/login.php');
 }
 
-$studentApps = q("SELECT * FROM student_applications WHERE student_id = ? ORDER BY id ASC", [$sid])->fetchAll();
-
+$studentApps = q('SELECT * FROM student_applications WHERE student_id = ? ORDER BY id ASC', [$sid])->fetchAll();
 $docs = [];
-foreach (q('SELECT doc_index, status, file_name, file_size, file_path FROM student_documents WHERE student_id = ?', [$sid]) as $d) {
-    $docs[(int)$d['doc_index']] = $d;
-}
-
-$ns = next_stage($r);
-$done = done_count($r);
-$total = count(STAGES);
-if ($r['visa'] === 'Granted') $head = ['Visa granted', 'Congratulations. Your processing officer will share the next steps for travel.'];
-elseif ($r['visa'] === 'Refused') $head = ['Visa refused', 'Your processing officer will contact you about the options.'];
-elseif ($ns) { $i = array_search($ns, array_column(STAGES, 0), true); $head = [$ns, STAGES[$i][2]]; }
-else $head = ['File complete', ''];
+foreach (q('SELECT doc_index, status, file_name, file_size, file_path FROM student_documents WHERE student_id = ?', [$sid]) as $d) $docs[(int)$d['doc_index']] = $d;
+$docState = load_doc_state([$sid])[$sid] ?? [];
+$docInfo = student_pending_docs($r, $docState);
+$r['_doc_info'] = $docInfo;
+$journey = student_journey($r);
+$pays = student_payments($r);
+$paySum = payment_summary($pays);
+$rec = meeting_recording_state($r);
 $upcoming = array_values(array_filter(due_list([$r]), fn($d) => $d['date'] >= today()));
-
-$portalLabel = $preview ? PORTALS[$u['role']]['label'] : PORTALS['student']['label'];
-$base = ($preview && is_admin_role($u['role'])) ? 'admin' : (($preview && is_officer_role($u['role'])) ? 'officer' : 'student');
-$reportBase = $preview ? (is_admin_role($u['role']) ? 'admin' : 'officer') : 'student';
-$idParam = $preview ? '&id=' . $sid : '';
-$driveUrl = safe_link($r['drive_link'] ?? null);
-$hasMeeting = student_has_meeting($r);
-$meetingUrl = url('meeting.php?id=' . (int)$sid);
+$consentTpl = get_applicable_consent_template((string)($r['country'] ?? ''));
 
 $isStaff = ($preview || is_staff_role($u['role']));
 $isStudent = !$isStaff;
+$portalLabel = $preview ? PORTALS[$u['role']]['label'] : PORTALS['student']['label'];
+$base = ($preview && is_admin_role($u['role'])) ? 'admin' : 'officer';
+$reportBase = $preview ? (is_admin_role($u['role']) ? 'admin' : 'officer') : 'student';
+$idParam = $preview ? '&id=' . $sid : '';
+$driveUrl = safe_link($r['drive_link'] ?? null);
 
-// Compute pending required documents for banner notification
-// Note: Offer letter (9), Enrollment / CAS (10), and Visa decision letter (11) are post-admission milestones, not initial student uploads.
-// For BS students, Bachelor degree and transcript (4) is also not required.
-$pendingDocsList = [];
-$stLevel = strtoupper(trim((string)($r['program_level'] ?? 'MS')));
-$docsChecklistDone = (($r['docs_checklist'] ?? '') === 'Yes') && empty(trim((string)($r['pending_docs_note'] ?? '')));
+// Student-friendly words for each journey step
+$friendly = [
+    'registration' => ['Registration', 'Your file is opened and your team is assigned.'],
+    'documents'    => ['Documents', 'You send your documents; we check and verify them.'],
+    'processing'   => ['Preparation', 'We prepare your accounts, CV / SOP and shortlist universities.'],
+    'university'   => ['Applications', 'We submit your applications to universities.'],
+    'offer'        => ['Offer letter', 'Admission / offer letter from the university.'],
+    'payment'      => ['Payments', 'Fee and consultancy installments.'],
+    'visa'         => ['Visa', 'Embassy appointment, visa file and decision.'],
+    'final'        => ['Complete', 'Visa granted — get ready to travel!'],
+];
+$doneSteps = count(array_filter($journey, fn($s) => in_array($s['status'], ['Completed', 'Skipped'], true)));
+$current = null;
+foreach ($journey as $k => $st) if (!in_array($st['status'], ['Completed', 'Skipped'], true)) { $current = $k; break; }
+$pct = (int)round($doneSteps / max(1, count($journey)) * 100);
+$firstName = trim(explode(' ', trim((string)$r['name']))[0] ?? '');
+$wa = fn(?string $phone, string $txt = '') => wa_link($phone, $txt);
 
-if (!$docsChecklistDone) {
-    foreach (DOCS as $idx => $dName) {
-        if (in_array($idx, [9, 10, 11], true)) continue;
-        if ($stLevel === 'BS' && $idx === 4) continue;
-        $dStatus = (string)($docs[$idx]['status'] ?? '');
-        $hasFileOrDone = !empty($docs[$idx]['file_path']) || in_array($dStatus, ['Received', 'Verified'], true);
-        if (!$hasFileOrDone) {
-            $pendingDocsList[$idx] = $dName;
-        }
-    }
-}
-$pendingCount = count($pendingDocsList);
+// What the student must do now
+$todo = [];
+if (!$docInfo['complete']) $todo[] = ['📄', 'Send ' . $docInfo['count'] . ' document' . ($docInfo['count'] === 1 ? '' : 's'), implode(', ', $docInfo['missing']), '#documents'];
+if (($r['consent'] ?? '') !== 'Yes') $todo[] = ['✍', 'Sign the consent form', $consentTpl ? 'Download it, sign it, and send it to your officer.' : 'Your officer will share it with you.', '#consent'];
+if ($upcoming) $todo[] = ['📅', $upcoming[0]['what'], 'On ' . fmt_date($upcoming[0]['date']), '#journey'];
 
-page_start($preview ? 'Student progress view' : 'My file', $u, $portalLabel);
-if ($preview): ?>
-<div class="flash warn" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem; margin-bottom: 1rem;">
-  <div><b><?= h(role_label($u['role'])) ?> Access:</b> Viewing live student portal for <b><?= h($r['name']) ?></b>.</div>
-  <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-    <?php if (is_admin_role($u['role']) && !empty($r['officer_id'])): ?>
-      <a class="btn sm" href="<?= h(url('admin/officers.php?id=' . $r['officer_id'])) ?>">← <?= h($r['officer_name'] ?: 'Officer') ?>'s Workspace</a>
-    <?php endif; ?>
-    <a class="btn sm" href="<?= h(url($base . '/student.php?id=' . $sid)) ?>">Edit student record</a>
+page_start($preview ? 'Student portal preview' : 'My file', $u, $portalLabel);
+?>
+<?php if ($preview): ?>
+<div class="flash warn sp-preview">
+  <div><b><?= h(role_label($u['role'])) ?> view:</b> this is exactly what <b><?= h($r['name']) ?></b> sees in the student portal.</div>
+  <div class="row-actions">
+    <a class="btn sm primary" href="<?= h(url($base . '/student.php?id=' . $sid)) ?>">Open staff profile</a>
     <a class="btn sm ghost" href="<?= h(url($base . '/students.php')) ?>">Student list</a>
   </div>
 </div>
 <?php endif; ?>
 
-<!-- Prominent Notification Banner for Pending Documents -->
-<?php if ($pendingCount > 0): ?>
-  <div style="background: var(--surface); border: 1.5px solid #f59e0b; border-left: 6px solid #d97706; border-radius: 8px; padding: 1.15rem 1.35rem; margin-bottom: 1.25rem; box-shadow: 0 2px 10px rgba(217, 119, 6, 0.08);">
-    <div style="display:flex; gap:0.85rem; align-items:flex-start;">
-      <div style="font-size: 1.65rem; line-height: 1;">⚠️</div>
-      <div style="flex: 1;">
-        <h3 style="margin: 0 0 0.35rem 0; font-size: 1.05rem; color: #b45309; font-weight:700;">
-          <?= $isStudent ? 'Action Required: ' . $pendingCount . ' Pending Documents' : 'Notice: ' . $pendingCount . ' Documents Pending for this Student' ?>
-        </h3>
-        <p style="margin: 0 0 0.55rem 0; font-size: 0.88rem; color: var(--fg); line-height: 1.5;">
-          <?= $isStudent ? 'Please upload the following required documents below so our processing team can proceed with your university admission and scholarships:' : 'The following required documents are still pending submission or file attachment:' ?>
-        </p>
-        <div style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.4rem;">
-          <?php foreach ($pendingDocsList as $pDoc): ?>
-            <span style="display:inline-block; background:rgba(245, 158, 11, 0.15); color:#b45309; border: 1px solid rgba(217, 119, 6, 0.3); padding:0.2rem 0.6rem; border-radius:4px; font-size:0.8rem; font-weight:600;">
-              • <?= h($pDoc) ?>
-            </span>
-          <?php endforeach; ?>
-        </div>
-        <?php if (!empty($r['pending_docs_note'])): ?>
-          <div style="background: var(--bg); border: 1px dashed var(--border); border-radius: 6px; padding: 0.65rem 0.9rem; font-size: 0.85rem; margin-top: 0.5rem;">
-            <b>📝 Processing Officer Note:</b> <?= nl2br(h($r['pending_docs_note'])) ?>
-          </div>
-        <?php endif; ?>
-        <?php if ($isStaff): ?>
-          <div style="margin-top:0.85rem; padding-top:0.65rem; border-top:1px solid rgba(217, 119, 6, 0.25); display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
-            <form method="post" action="<?= h(url('upload_document.php')) ?>" style="display:inline;">
-              <?= csrf_field() ?>
-              <input type="hidden" name="action" value="mark_all_docs_received">
-              <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-              <button type="submit" class="btn sm" style="background:#059669; color:#fff; border:none; font-weight:600; cursor:pointer;" onclick="return confirm('Mark all required core documents as Received for this student? This will clear the pending documents notice.');">
-                ✓ Mark All Core Docs Received &amp; Clear Notice
-              </button>
-            </form>
-            <a class="btn sm ghost" href="<?= h(url($base . '/student.php?id=' . (int)$sid . '#onboarding')) ?>">Edit Checklist in Profile &rarr;</a>
-          </div>
-        <?php endif; ?>
-      </div>
-    </div>
+<section class="sp-hero">
+  <div class="sp-hero-main">
+    <div class="eyebrow"><?= country_flag($r['country'] ?? '') ?> <?= h(($r['country'] ?: '—') . ($r['program_level'] ? ' · ' . $r['program_level'] : '') . ($r['intake'] ? ' · Intake ' . $r['intake'] : '')) ?></div>
+    <h1><?= $isStudent ? 'Assalam o Alaikum, ' . h($firstName) . ' 👋' : h($r['name']) ?></h1>
+    <p class="sp-now"><?php if ($r['visa'] === 'Granted'): ?>🎉 <b>Your visa is granted.</b> Your officer will share the travel steps.<?php elseif ($r['visa'] === 'Refused'): ?>Your visa was refused. Your officer will contact you about the options.<?php elseif ($current): ?>Now: <b><?= h($friendly[$current][0]) ?></b> — <?= h($friendly[$current][1]) ?><?php else: ?>Your file is complete.<?php endif; ?></p>
   </div>
-<?php else: ?>
-  <div style="background: var(--surface); border: 1.5px solid #10b981; border-left: 6px solid #059669; border-radius: 8px; padding: 0.9rem 1.25rem; margin-bottom: 1.25rem; display:flex; gap:0.75rem; align-items:center;">
-    <div style="font-size: 1.45rem;">✅</div>
-    <div style="font-size: 0.9rem; color: var(--fg); font-weight:500;">
-      All required documents have been received! Our processing team is preparing and submitting your university applications.
-    </div>
+  <div class="sp-ring" style="--p:<?= $pct ?>" role="img" aria-label="<?= $doneSteps ?> of <?= count($journey) ?> steps done">
+    <span><b><?= $pct ?>%</b><small><?= $doneSteps ?> / <?= count($journey) ?> steps</small></span>
   </div>
-<?php endif; ?>
-
-<section class="panel hero-step">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;">
-    <div>
-      <div class="eyebrow">Where your file is now</div>
-      <h1><?= h($head[0]) ?></h1>
-      <p class="muted"><?= h($head[1]) ?></p>
-    </div>
-    <?php if ($isStaff): ?>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-        <?php if ($driveUrl): ?>
-          <a class="btn sm" href="<?= h($driveUrl) ?>" target="_blank" rel="noopener noreferrer" title="Open Student Documents Folder in Google Drive">📁 Open Documents Folder</a>
-        <?php endif; ?>
-        <?php if ($hasMeeting): ?>
-          <a class="btn sm" href="<?= h($meetingUrl) ?>" target="_blank" rel="noopener noreferrer" title="Open Recorded Meeting Video">🎥 Open Recorded Meeting</a>
-        <?php endif; ?>
-        <a class="btn sm primary" href="<?= h(url($reportBase . '/report.php?format=pdf' . $idParam)) ?>">⬇ Download Student Report (PDF)</a>
-        <a class="btn sm ghost" href="<?= h(url($reportBase . '/report.php?format=csv' . $idParam)) ?>">Download Student CSV</a>
-      </div>
-    <?php endif; ?>
-  </div>
-  <div class="prog"><i style="width:<?= round($done / $total * 100, 1) ?>%"></i></div>
-  <div class="num small muted"><?= $done ?> of <?= $total ?> steps complete</div>
-  <?php if ($upcoming): ?><div class="flash acc"><b>Upcoming:</b> <?= h($upcoming[0]['what']) ?> on <?= h(fmt_date($upcoming[0]['date'])) ?></div><?php endif; ?>
 </section>
 
-<div class="grid2">
-  <section class="panel">
-    <div class="panel-h"><h2>Your steps</h2></div>
-    <ol class="tl">
-    <?php foreach (STAGES as $i => $s):
-        $st = stage_done($r, $i) ? 'done' : ($s[0] === $ns ? 'now' : 'later'); ?>
-      <li class="<?= $st ?>"><span class="dot"></span>
-        <div>
-          <b><?= h($s[0]) ?></b>
-          <div class="m"><?= h($s[2]) ?></div>
-          <?php if ($isStaff): ?>
-            <?php if ($s[1] === 'recorded_uploaded'): ?>
-              <?php if ($hasMeeting): ?>
-                <div style="margin-top:0.35rem; display:flex; gap:0.4rem; flex-wrap:wrap;">
-                  <a class="btn sm" href="<?= h($meetingUrl) ?>" target="_blank" rel="noopener noreferrer">🎥 Open Meeting / Recording ↗</a>
-                  <a class="btn sm ghost" href="<?= h($meetingUrl . '&download=1') ?>">⬇ Download Recording</a>
-                </div>
-              <?php else: ?>
-                <div class="small" style="color:#ef4444; margin-top:0.35rem; font-weight:600;">
-                  ⚠️ Recorded meeting video not available
-                </div>
-              <?php endif; ?>
-            <?php elseif ($s[1] === 'docs_checklist' && $driveUrl): ?>
-              <div style="margin-top:0.35rem;"><a class="btn sm" href="<?= h($driveUrl) ?>" target="_blank" rel="noopener noreferrer">📁 Open Documents Folder ↗</a></div>
-            <?php endif; ?>
+<?php if ($todo): ?>
+<section class="panel sp-todo">
+  <div class="panel-h"><h2><?= $isStudent ? 'What you need to do' : 'Waiting on the student' ?></h2></div>
+  <div class="sp-todo-list">
+    <?php foreach ($todo as [$ic, $t, $sub, $href]): ?>
+      <a class="sp-todo-item" href="<?= h($href) ?>"><span class="sp-ic"><?= $ic ?></span><span><b><?= h($t) ?></b><small><?= h($sub) ?></small></span><span class="sp-go">→</span></a>
+    <?php endforeach; ?>
+  </div>
+</section>
+<?php else: ?>
+<div class="flash ok">✅ Nothing needed from <?= $isStudent ? 'you' : 'the student' ?> right now. Your team is working on the next step.</div>
+<?php endif; ?>
+
+<section class="panel" id="journey">
+  <div class="panel-h"><h2>Your journey</h2><p>Every step of your file, from registration to visa.</p></div>
+  <ol class="sp-steps">
+    <?php foreach ($journey as $k => $st):
+      $state = in_array($st['status'], ['Completed', 'Skipped'], true) ? 'done' : ($k === $current ? 'now' : ($st['status'] === 'On Hold' || $st['status'] === 'Rejected' ? 'hold' : 'later')); ?>
+      <li class="<?= $state ?>">
+        <span class="sp-dot"><?= $state === 'done' ? '✓' : array_search($k, array_keys($journey), true) + 1 ?></span>
+        <div><b><?= h($friendly[$k][0]) ?></b><small><?= h($friendly[$k][1]) ?></small>
+          <?php if ($st['date']): ?><small class="sp-date"><?= h(fmt_date((string)$st['date'])) ?></small><?php endif; ?></div>
+      </li>
+    <?php endforeach; ?>
+  </ol>
+  <?php if ($upcoming): ?><p class="flash acc" style="margin:12px 0 0"><b>Coming up:</b> <?= h($upcoming[0]['what']) ?> on <?= h(fmt_date($upcoming[0]['date'])) ?></p><?php endif; ?>
+</section>
+
+<div class="sp-grid">
+  <section class="panel" id="documents">
+    <div class="panel-h"><div><h2>Documents</h2><p><?= $docInfo['complete'] ? '✓ All required documents received.' : $docInfo['in_hand'] . ' of ' . $docInfo['required'] . ' received · ' . $docInfo['count'] . ' still needed' ?></p></div>
+      <?php if ($isStaff && $driveUrl): ?><a class="btn sm" href="<?= h($driveUrl) ?>" target="_blank" rel="noopener noreferrer">📁 Drive ↗</a><?php endif; ?></div>
+    <div class="sp-bar"><i style="width:<?= (int)round($docInfo['in_hand'] / max(1, $docInfo['required']) * 100) ?>%"></i></div>
+    <div class="sp-docs">
+    <?php foreach (DOCS as $i => $d):
+      $dRow = $docs[$i] ?? null; $v = (string)($dRow['status'] ?? '');
+      if ($v === 'Uploaded') $v = 'Received';
+      $hasFile = !empty($dRow['file_path']);
+      $later = $i >= 9;
+      $needed = in_array($i, $docInfo['missing_idx'] ?? [], true);
+      if ($later && !$hasFile && !$v) continue;   // offer / CAS / visa letters appear once they exist
+      if (!$later && !isset(REQUIRED_DOCS[$i])) continue;
+      $isBsSkip = $i === 4 && strtoupper((string)($r['program_level'] ?? '')) === 'BS';
+      if ($isBsSkip && !$hasFile) continue;
+      $label = $needed ? ($v === 'Requested' ? 'Asked again' : 'Needed') : ($v === 'Verified' ? 'Verified' : ($v === 'Not Required' ? 'Not needed' : ($later && !$hasFile && in_array($v, ['', 'Pending', 'Requested'], true) ? 'Not yet' : 'Received')));
+      $tone = ['Needed' => 'bad', 'Asked again' => 'warn', 'Verified' => 'ok', 'Received' => 'acc', 'Not needed' => '', 'Not yet' => ''][$label]; ?>
+      <div class="sp-doc <?= $needed ? 'is-needed' : '' ?>">
+        <div class="sp-doc-main"><b><?= h($d) ?></b><?php if ($hasFile && !str_starts_with((string)$dRow['file_path'], 'gdrive:')): ?><small>📎 <?= h($dRow['file_name'] ?? '') ?></small><?php endif; ?></div>
+        <span class="pill sm <?= $tone ?>"><?= $label === 'Verified' ? '✓ ' : '' ?><?= h($label) ?></span>
+        <div class="sp-doc-act">
+          <?php if ($hasFile): ?><a class="btn sm" href="<?= h(url('document.php?id=' . $sid . '&doc=' . $i)) ?>" target="_blank">View</a><?php endif; ?>
+          <?php if ($needed): ?>
+            <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" class="sp-up">
+              <?= csrf_field() ?><input type="hidden" name="student_id" value="<?= (int)$sid ?>"><input type="hidden" name="doc_index" value="<?= (int)$i ?>">
+              <label class="btn sm primary sp-file">⬆ Upload<input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onchange="this.form.submit()" aria-label="Upload <?= h($d) ?>"></label>
+            </form>
           <?php endif; ?>
         </div>
-        <?php
-          $pillClass = $st === 'done' ? 'ok' : ($st === 'now' ? 'acc' : '');
-          $pillText = $st === 'done' ? 'Done' : ($st === 'now' ? 'In progress' : 'Upcoming');
-          if ($s[1] === 'recorded_uploaded' && !$hasMeeting) {
-              $pillClass = 'bad';
-              $pillText = 'Not Available';
-          }
-        ?>
-        <span class="pill <?= $pillClass ?>"><?= $pillText ?></span></li>
+      </div>
     <?php endforeach; ?>
-    </ol>
+    <?php foreach ($docInfo['missing'] as $m): if (in_array($m, REQUIRED_DOCS, true)) continue; ?>
+      <div class="sp-doc is-needed"><div class="sp-doc-main"><b><?= h($m) ?></b><small>Asked by your officer</small></div><span class="pill sm bad">Needed</span><div class="sp-doc-act"></div></div>
+    <?php endforeach; ?>
+    </div>
+    <details class="sp-more"><summary>Send another document</summary>
+      <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" class="fields" style="margin-top:8px">
+        <?= csrf_field() ?><input type="hidden" name="student_id" value="<?= (int)$sid ?>">
+        <label class="f"><span>What is it?</span><input name="custom_title" required placeholder="e.g. Experience letter, LOR"></label>
+        <label class="f"><span>File</span><input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"></label>
+        <div class="f"><span>&nbsp;</span><button class="btn primary sm" type="submit">Upload</button></div>
+      </form>
+    </details>
+    <?php $customDocs = q('SELECT * FROM custom_documents WHERE student_id = ? ORDER BY id DESC', [$sid])->fetchAll(); if ($customDocs): ?>
+      <div class="sp-docs" style="margin-top:8px">
+        <?php foreach ($customDocs as $cd): ?>
+          <div class="sp-doc"><div class="sp-doc-main"><b><?= h($cd['title']) ?></b><small>📎 <?= h($cd['file_name']) ?></small></div><span class="pill sm acc">Sent</span>
+            <div class="sp-doc-act"><a class="btn sm" href="<?= h(url('document.php?id=' . $sid . '&cid=' . $cd['id'])) ?>" target="_blank">View</a></div></div>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
   </section>
 
   <div class="stack">
-    <section class="panel">
-      <div class="panel-h">
-        <div>
-          <h2>Required Documents</h2>
-          <p><?= $isStudent ? 'Upload any pending documents below or inspect your verified files' : 'Click View or Download to inspect verified files or attach replacements' ?></p>
-        </div>
-        <?php if ($isStaff && $driveUrl): ?>
-          <a class="btn sm primary" href="<?= h($driveUrl) ?>" target="_blank" rel="noopener noreferrer">📁 Open All in Drive ↗</a>
-        <?php endif; ?>
-      </div>
-      <div class="list">
-      <?php foreach (DOCS as $i => $d): 
-        $dRow = $docs[$i] ?? null;
-        $v = is_array($dRow) ? ($dRow['status'] ?? '') : (string)$dRow;
-        $hasFile = is_array($dRow) && !empty($dRow['file_path']);
-        $fileName = ($hasFile && !empty($dRow['file_name'])) ? $dRow['file_name'] : '';
-      ?>
-        <div class="li" style="flex-wrap:wrap; gap:0.6rem; justify-content:space-between; align-items:flex-start;">
-          <div style="flex: 1; min-width: 240px;">
-            <b><?= h($d) ?></b>
-            <?php if ($hasFile): ?>
-              <div class="small muted" style="font-size:0.78rem; margin-top:0.15rem;">📎 <?= h($fileName) ?></div>
-              <div class="small" style="margin-top:0.35rem; display:flex; gap:0.45rem; align-items:center; flex-wrap:wrap;">
-                <a class="btn sm" href="<?= h(url('document.php?id=' . $sid . '&doc=' . $i)) ?>" target="_blank" title="View <?= h($fileName) ?>">📄 View <?= h($d) ?></a>
-                <a class="btn sm primary" href="<?= h(url('document.php?id=' . $sid . '&doc=' . $i . '&download=1')) ?>" title="Download <?= h($fileName) ?>">⬇ Download</a>
-                
-                <?php if ($isStaff): ?>
-                  <details style="display:inline-block;">
-                    <summary class="small muted" style="cursor:pointer; font-size:0.75rem; text-decoration:underline;">Replace</summary>
-                    <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" style="margin-top:0.35rem; display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-                      <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
-                      <input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="font-size:0.75rem;">
-                      <button class="btn sm primary" type="submit" style="padding:0.15rem 0.5rem; font-size:0.75rem;">Save</button>
-                    </form>
-                  </details>
-                <?php endif; ?>
-              </div>
-            <?php else: ?>
-              <div class="small" style="font-size:0.78rem; color:#b45309; margin-top:0.2rem; font-weight:500;">
-                ⚠️ Not submitted yet
-              </div>
-              <!-- Direct inline upload form right here for both student and staff! -->
-              <div style="margin-top:0.4rem; display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
-                <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-                  <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
-                  <input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="font-size:0.78rem; max-width:210px;">
-                  <button class="btn sm primary" type="submit" style="padding:0.2rem 0.6rem; font-size:0.78rem;">
-                    📤 Upload <?= h($d) ?>
-                  </button>
-                </form>
-                <?php if ($isStaff): ?>
-                  <form method="post" action="<?= h(url('upload_document.php')) ?>" style="display:inline;">
-                    <?= csrf_field() ?>
-                    <input type="hidden" name="action" value="set_doc_status">
-                    <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-                    <input type="hidden" name="doc_index" value="<?= (int)$i ?>">
-                    <input type="hidden" name="doc_status" value="Received">
-                    <button class="btn sm ghost" type="submit" style="padding:0.2rem 0.55rem; font-size:0.78rem;">✓ Mark Received</button>
-                  </form>
-                <?php endif; ?>
-              </div>
-            <?php endif; ?>
+    <section class="panel" id="team">
+      <div class="panel-h"><h2>Your team</h2></div>
+      <?php foreach ([['Front-end officer', $r['frontend_officer_name'], $r['fe_phone'] ?? null, $r['fe_email'] ?? null, 'Documents & first meeting'],
+                      ['Back-end officer', $r['officer_name'], $r['officer_phone'] ?? null, $r['officer_email'] ?? null, 'Applications, offer & visa'],
+                      ['Counselor', $r['counselor'], $r['counselor_phone'] ?? null, null, 'Your counselling']] as [$role, $name, $ph, $em, $what]): if (!$name) continue; ?>
+        <div class="sp-person">
+          <span class="avatar"><?= h(user_initials((string)$name)) ?></span>
+          <div><b><?= h($name) ?></b><small><?= h($role) ?> · <?= h($what) ?></small></div>
+          <div class="sp-person-act">
+            <?php if ($l = $wa($ph, 'Assalam o Alaikum, this is ' . $r['name'] . ' (ScholarshipHive student).')): ?><a class="btn sm" href="<?= h($l) ?>" target="_blank" rel="noopener noreferrer" title="WhatsApp">💬</a><?php endif; ?>
+            <?php if ($em): ?><a class="btn sm" href="mailto:<?= h($em) ?>" title="Email">✉</a><?php endif; ?>
           </div>
-          <span class="pill <?= pill_class($v ?: 'Pending') ?>" style="margin-top:0.2rem;"><?= h($v ?: 'Pending') ?></span>
         </div>
       <?php endforeach; ?>
-      </div>
+      <?php if (!$r['frontend_officer_name'] && !$r['officer_name']): ?><p class="muted small">Your team will be assigned shortly.</p><?php endif; ?>
     </section>
 
-    <!-- Additional / Custom Documents Section (Add Manually) -->
-    <?php
-      $customDocs = q("SELECT * FROM custom_documents WHERE student_id = ? ORDER BY id DESC", [$sid])->fetchAll();
-      $mappedFileIds = [];
-      foreach ($docs as $dItem) {
-          $fp = (string)($dItem['file_path'] ?? '');
-          if (str_starts_with($fp, 'gdrive:')) {
-              $mappedFileIds[substr($fp, 7)] = true;
-          }
-      }
-      $extraDriveFiles = array_values(array_filter($allDriveFiles, function ($gf) use ($mappedFileIds) {
-          $fid = (string)($gf['id'] ?? '');
-          if ($fid === '' || isset($mappedFileIds[$fid])) return false;
-          if (!empty($gf['is_meeting'])) return false;
-          $fn = strtolower((string)($gf['name'] ?? '') . ' ' . (string)($gf['raw_title'] ?? ''));
-          if (str_contains($fn, '.mp4') || str_contains($fn, '.m4a') || str_contains($fn, ' video')) return false;
-          return true;
-      }));
-    ?>
-    <section class="panel">
-      <div class="panel-h">
-        <div>
-          <h2>Additional Documents & Custom Files</h2>
-          <p>Extra documents, portfolios, internships, or custom files added for this student</p>
-        </div>
-      </div>
+    <section class="panel" id="consent">
+      <div class="panel-h"><h2>Consent form</h2><span class="pill sm <?= ($r['consent'] ?? '') === 'Yes' ? 'ok' : 'warn' ?>"><?= ($r['consent'] ?? '') === 'Yes' ? '✓ Received' : 'Not received yet' ?></span></div>
+      <?php if ($consentTpl): ?>
+        <p class="small muted"><?= ($r['consent'] ?? '') === 'Yes' ? 'Thank you — your signed form is on file.' : 'Download the form, sign it, and send the signed copy to your officer (or upload it as “Signed consent form” above).' ?></p>
+        <a class="btn sm" href="<?= h(url('consent_download.php?type=template&id=' . (int)$consentTpl['id'] . '&download=1')) ?>">⬇ <?= h($consentTpl['title']) ?></a>
+      <?php else: ?><p class="small muted">Your officer will share the consent form with you.</p><?php endif; ?>
+    </section>
 
-      <?php if (!empty($customDocs) || ($isStaff && !empty($extraDriveFiles))): ?>
-      <div class="list" style="margin-bottom: 1.25rem;">
-        <?php foreach ($customDocs as $cd): 
-          $cKb = round(($cd['file_size'] ?? 0) / 1024, 1);
-        ?>
-          <div class="li" style="flex-wrap:wrap; gap:0.5rem; justify-content:space-between; align-items:center;">
-            <div>
-              <b>📄 <?= h($cd['title']) ?></b>
-              <div class="small muted">📎 <?= h($cd['file_name']) ?> (<?= $cKb ?> KB) · Uploaded <?= fmt_date(substr((string)$cd['created_at'], 0, 10)) ?></div>
-            </div>
-            <div style="display:flex; gap:0.35rem; align-items:center;">
-              <a class="btn sm" href="<?= h(url('document.php?id=' . $sid . '&cid=' . $cd['id'])) ?>" target="_blank">📄 View</a>
-              <a class="btn sm primary" href="<?= h(url('document.php?id=' . $sid . '&cid=' . $cd['id'] . '&download=1')) ?>">⬇ Download</a>
-              <?php if ($isStaff): ?>
-                <form method="post" action="<?= h(url('upload_document.php')) ?>" style="display:inline;" onsubmit="return confirm('Remove this custom document?');">
-                  <?= csrf_field() ?>
-                  <input type="hidden" name="action" value="delete_custom">
-                  <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-                  <input type="hidden" name="cid" value="<?= (int)$cd['id'] ?>">
-                  <button class="btn sm bad" type="submit" style="padding: 0.2rem 0.5rem;" title="Delete Document">🗑</button>
-                </form>
-              <?php endif; ?>
-            </div>
-          </div>
+    <section class="panel" id="payments">
+      <div class="panel-h"><h2>Payments</h2><span class="small muted"><?= $paySum['received'] ?> of <?= $paySum['total'] ?> received</span></div>
+      <div class="sp-pays">
+        <?php foreach ($pays as $p): $okp = $p['status'] === 'Received'; ?>
+          <div class="sp-pay <?= $okp ? 'is-ok' : '' ?>"><span class="sp-pay-n"><?= ordinal_label((int)$p['installment_no']) ?></span>
+            <span><?= $okp ? '✓ Received' : h($p['status']) ?><?= $p['received_date'] ? ' · ' . h(fmt_date((string)$p['received_date'])) : '' ?></span></div>
         <?php endforeach; ?>
-
-        <?php if ($isStaff): ?>
-          <?php foreach ($extraDriveFiles as $gf):
-            $fid = (string)($gf['id'] ?? '');
-            $fn  = (string)($gf['name'] ?? 'Document');
-            $sf  = (string)($gf['subfolder'] ?? '');
-            $sz  = (string)($gf['size'] ?? '');
-            $viewHref = url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn));
-            $dlHref = url('document.php?id=' . $sid . '&fid=' . rawurlencode($fid) . '&name=' . rawurlencode($fn) . '&download=1');
-          ?>
-            <div class="li" style="flex-wrap:wrap; gap:0.5rem; justify-content:space-between; align-items:center;">
-              <div>
-                <b>📄 <?= h($fn) ?></b>
-                <div class="small muted">
-                  <?= $sf !== '' ? 'Cloud Folder: <b>' . h($sf) . '</b>' : 'Cloud Storage' ?>
-                  <?= $sz !== '' ? ' · ' . h($sz) : '' ?>
-                </div>
-              </div>
-              <div style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
-                <a class="btn sm" href="<?= h($viewHref) ?>" target="_blank" rel="noopener noreferrer">📄 View</a>
-                <a class="btn sm primary" href="<?= h($dlHref) ?>">⬇ Download</a>
-              </div>
-            </div>
-          <?php endforeach; ?>
-        <?php endif; ?>
       </div>
-      <?php else: ?>
-        <p class="muted small" style="margin-bottom: 1rem;">No additional custom files added yet.</p>
+    </section>
+
+    <?php if (!empty($r['meeting_video_path']) || ($rec['state'] === 'recorded' && !empty($rec['url']))): ?>
+    <section class="panel" id="meeting">
+      <div class="panel-h"><h2>Your meeting recording</h2></div>
+      <?php if (!empty($r['meeting_video_path'])): ?>
+        <video class="meet-video" controls preload="metadata" src="<?= h(url('meeting_video.php?id=' . (int)$sid)) ?>"></video>
+      <?php elseif ($rec['url']): ?>
+        <a class="btn primary" href="<?= h($rec['url']) ?>" target="_blank" rel="noopener noreferrer">▶ Watch recording</a>
       <?php endif; ?>
-
-      <!-- Form to Add Additional Document Manually -->
-      <div style="background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; padding: 1rem;">
-        <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">➕ Add Document Manually</h4>
-        <form method="post" action="<?= h(url('upload_document.php')) ?>" enctype="multipart/form-data" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:flex-end;">
-          <?= csrf_field() ?>
-          <input type="hidden" name="student_id" value="<?= (int)$sid ?>">
-          <label style="flex: 1; min-width: 160px; margin:0;">
-            <span class="small muted" style="display:block; margin-bottom: 0.2rem;">Document Title:</span>
-            <input name="custom_title" placeholder="e.g. Work Experience, Portfolio, Affidavit" required style="width:100%; font-size:0.85rem;">
-          </label>
-          <label style="flex: 1; min-width: 180px; margin:0;">
-            <span class="small muted" style="display:block; margin-bottom: 0.2rem;">Choose File:</span>
-            <input type="file" name="file" required accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" style="width:100%; font-size:0.85rem;">
-          </label>
-          <button class="btn primary sm" type="submit" style="align-self: flex-end;">Upload Document</button>
-        </form>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-h"><h2>Your team &amp; Academic Profile</h2></div>
-      <div class="list">
-        <div class="li"><span>Destination Country</span><b><?= h($r['country'] ?: 'Italy') ?> <?= !empty($r['program_level']) ? '(' . h($r['program_level']) . ')' : '' ?></b></div>
-        <div class="li"><span>Front-End Officer</span><b><?= h($r['frontend_officer_name'] ?: 'Not assigned') ?></b></div>
-        <div class="li"><span>Back-End Officer</span><b><?= h($r['officer_name'] ?: 'Not assigned') ?></b></div>
-        <div class="li"><span>Counselor</span><b><?= h($r['counselor'] ?: 'Not assigned') ?></b></div>
-        <div class="li"><span>Branch</span><b><?= h($r['branch']) ?></b></div>
-        <div class="li"><span>Intake</span><b><?= h($r['intake']) ?></b></div>
-        <?php if (!empty($r['last_degree'])): ?><div class="li"><span>Last Degree</span><b><?= h($r['last_degree']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['gpa'])): ?><div class="li"><span>CGPA / Marks</span><b><?= h($r['gpa']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['ielts_score'])): ?><div class="li"><span>IELTS / Language</span><b><?= h($r['ielts_score']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['applied_for'])): ?><div class="li"><span>Applied For</span><b><?= h($r['applied_for']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['campus_france_status'])): ?><div class="li"><span>Campus France / Uni-Assist</span><b><?= h($r['campus_france_status']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['embassy_status'])): ?><div class="li"><span>Embassy Status</span><b><?= h($r['embassy_status']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['admission_secured'])): ?><div class="li"><span>Admission Secured</span><b><?= h($r['admission_secured']) ?></b></div><?php endif; ?>
-      </div>
-    </section>
-    <?php if (!empty($r['shortlisting']) || !empty($r['portal_id']) || !empty($r['pending_docs_note'])): ?>
-    <section class="panel">
-      <div class="panel-h"><h2>Application details</h2></div>
-      <div class="list">
-        <?php if (!empty($r['shortlisting'])): ?><div class="li"><span>Shortlisting</span><b><?= h($r['shortlisting']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['portal_id'])): ?><div class="li"><span>Portal ID</span><b><?= h($r['portal_id']) ?></b></div><?php endif; ?>
-        <?php if (!empty($r['pending_docs_note'])): ?><div class="li" style="flex-direction:column; align-items:flex-start; gap:0.25rem;"><span>Pending documents required</span><span class="muted" style="font-size:0.85rem;"><?= nl2br(h($r['pending_docs_note'])) ?></span></div><?php endif; ?>
-      </div>
     </section>
     <?php endif; ?>
   </div>
 </div>
 
-<?php if (!empty($studentApps)): ?>
-<section class="panel" style="margin-top:1.5rem;">
-  <div class="panel-h">
-    <div>
-      <h2>🏛 University Applications &amp; Shortlisted Programs (<?= count($studentApps) ?>)</h2>
-      <p>Live status of university applications submitted for <?= h($r['name']) ?></p>
-    </div>
+<?php if ($studentApps): ?>
+<section class="panel" id="applications">
+  <div class="panel-h"><div><h2>Your universities (<?= count($studentApps) ?>)</h2><p>Where we are applying for you and the latest status.</p></div></div>
+  <div class="sp-apps">
+    <?php foreach ($studentApps as $app): $st = (string)($app['status'] ?: 'Shortlisted'); ?>
+      <article class="sp-app">
+        <b><?= h($app['university'] ?: 'University') ?></b>
+        <small><?= h($app['program'] ?: '—') ?></small>
+        <div class="sp-app-meta">
+          <span class="pill sm <?= stripos($st, 'admit') !== false || stripos($st, 'accept') !== false || stripos($st, 'offer') !== false ? 'ok' : (stripos($st, 'reject') !== false ? 'bad' : 'acc') ?>"><?= h($st) ?></span>
+          <?php if (!empty($app['deadline'])): ?><small>Deadline <?= h($app['deadline']) ?></small><?php endif; ?>
+        </div>
+      </article>
+    <?php endforeach; ?>
   </div>
-  <div class="tbl"><table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>University</th>
-        <th>Program / Course</th>
-        <th>Track / Type</th>
-        <th>Deadline &amp; Applied</th>
-        <th>Fee &amp; Nostrification</th>
-        <th>Status</th>
-        <th>Remarks</th>
-      </tr>
-    </thead>
-    <tbody>
-      <?php foreach ($studentApps as $idx => $app):
-          $pLink = safe_link($app['portal_link'] ?? null);
-          $appSt = (string)($app['status'] ?: 'Pending');
-      ?>
-        <tr>
-          <td class="num"><?= $idx + 1 ?></td>
-          <td>
-            <b><?= h($app['university'] ?: 'University') ?></b>
-            <?php if ($pLink && $isStaff): ?>
-              <div><a href="<?= h($pLink) ?>" target="_blank" rel="noopener noreferrer" class="small">🔗 Portal ↗</a></div>
-            <?php endif; ?>
-          </td>
-          <td><?= h($app['program'] ?: '—') ?></td>
-          <td><span class="pill sm"><?= h($app['application_type'] ?: $app['country']) ?></span></td>
-          <td class="small">
-            <?php if (!empty($app['deadline'])): ?><div>Deadline: <b><?= h($app['deadline']) ?></b></div><?php endif; ?>
-            <?php if (!empty($app['applied_date'])): ?><div>Applied: <?= h($app['applied_date']) ?></div><?php endif; ?>
-          </td>
-          <td class="small">
-            <?= h(trim(($app['application_fee'] ?? '') . (!empty($app['nostrification_status']) ? ' · Nostr: ' . $app['nostrification_status'] : '')) ?: '—') ?>
-          </td>
-          <td><span class="pill sm acc"><?= h($appSt) ?></span></td>
-          <td class="small muted"><?= h($app['remarks'] ?: '—') ?></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table></div>
 </section>
 <?php endif; ?>
+
+<section class="panel sp-foot">
+  <div class="row-actions">
+    <a class="btn sm" href="<?= h(url($reportBase . '/report.php?format=pdf' . $idParam)) ?>">⬇ Download my file summary (PDF)</a>
+    <?php if ($isStudent): ?><a class="btn sm ghost" href="<?= h(url('account/password.php')) ?>">Change password</a><?php endif; ?>
+  </div>
+</section>
 <?php page_end();

@@ -1065,3 +1065,15 @@
     f.querySelectorAll('[data-rule]').forEach(function (li) { li.classList.toggle('ok', !!ok[li.getAttribute('data-rule')]); });
   });
 })();
+
+/* ---- Students: "More filters" panel ---- */
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-sf-more]') : null;
+    if (!b) return;
+    var p = document.querySelector('[data-sf-panel]');
+    if (!p) return;
+    p.hidden = !p.hidden;
+    b.setAttribute('aria-expanded', p.hidden ? 'false' : 'true');
+  });
+})();

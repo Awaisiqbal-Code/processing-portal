@@ -252,17 +252,16 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
     <h1><?= $admin ? 'Global Operations & Team Overview' : 'Welcome, ' . h($u['name']) ?></h1>
     <p>Empowering ambitious students to unlock global education opportunities through trusted guidance and scholarship expertise.</p>
     <div class="values-strip">
-      <span class="value-chip"><?= country_flag('Italy') ?> Italy</span>
-      <span class="value-chip"><?= country_flag('France') ?> France</span>
-      <span class="value-chip"><?= country_flag('Germany') ?> Germany</span>
-      <span class="value-chip"><?= country_flag('Czech Republic') ?> Czech Republic</span>
-      <span class="value-chip"><?= country_flag('China') ?> China</span>
-      <span class="value-chip"><?= country_flag('Austria') ?> Austria</span>
+      <?php $heroCountries = array_count_values(array_filter(array_map(fn($x) => trim((string)($x['country'] ?? '')), $rows)));
+            arsort($heroCountries);
+            foreach ($heroCountries as $hc => $hn): ?>
+        <a class="value-chip" href="<?= h(url($base . '/students.php?country=' . rawurlencode($hc))) ?>" style="text-decoration:none"><?= country_flag($hc) ?> <?= h($hc) ?> · <?= $hn ?></a>
+      <?php endforeach; ?>
     </div>
   </div>
   <div class="row-actions">
     <a class="btn sm" style="background:rgba(255,255,255,0.14); color:#FFFFFF; border-color:rgba(116,195,228,0.5);" href="<?= h(url($base . '/pending.php')) ?>">⏳ Open Pending Tracker &rarr;</a>
-    <a class="btn sm primary" style="background:#1392CB; border-color:#74C3E4;" href="<?= h(url($base . '/students.php')) ?>">Manage All Students &rarr;</a>
+    <a class="btn sm primary" style="background:#1392CB; border-color:#74C3E4;" href="<?= h(url($base . '/students.php')) ?>"><?= $admin ? 'Manage All Students' : 'My students' ?> &rarr;</a>
     <?php if (can_quick_add_student($u)): ?><button type="button" class="btn sm" data-qa-open style="background:#fff; color:#0F5D9E; border-color:#fff;">＋ Add Student</button><?php endif; ?>
   </div>
 </div>
@@ -281,11 +280,32 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
 </a>
 <?php endif; endif; ?>
 
+<?php if (!$admin):
+    $work = array_fill_keys(array_keys(PENDING_TASKS), 0);
+    foreach ($activeRows as $ar) foreach (PENDING_TASKS as $k => $_) if (!empty($ar['_p'][$k])) $work[$k]++;
+    $workIcons = ['docs' => '📄', 'consent' => '✍', 'first_meeting' => '🤝', 'recording' => '🎥', 'second_tax' => '🧾', 'shortlisting' => '🏛', 'credentials' => '🔑', 'remarks' => '💬'];
+    $workTotal = array_sum($work); ?>
+<section class="panel my-work">
+  <div class="panel-h"><div><div class="eyebrow">My work</div><h2><?= $workTotal ? 'What needs you today' : 'All clear 🎉' ?></h2>
+    <p><?= $workTotal ? 'Click a card to open just those students and fix each item right there.' : 'Nothing is pending on your students right now.' ?></p></div>
+    <a class="btn sm" href="<?= h(url('officer/pending_report.php')) ?>">My pending report →</a></div>
+  <?php if ($workTotal): ?>
+  <div class="work-cards">
+    <?php foreach ($work as $k => $c): if (!$c) continue; ?>
+      <a class="work-card <?= $k === 'remarks' || $k === 'docs' ? 'is-hot' : '' ?>" href="<?= h(url($base . '/pending.php?cat=' . $k)) ?>#list">
+        <span class="wc-ic"><?= $workIcons[$k] ?? '•' ?></span><span class="wc-n"><?= $c ?></span><span class="wc-l"><?= h(PENDING_TASKS[$k]) ?></span>
+      </a>
+    <?php endforeach; ?>
+  </div>
+  <?php endif; ?>
+</section>
+<?php endif; ?>
+
 <div class="kpis">
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php')) ?>"><div class="l">Total students</div><div class="v"><?= $n ?></div><div class="s"><?= $thisMonth ?> added this month · Click to view</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=onboarding')) ?>"><div class="l">In onboarding</div><div class="v"><?= $onb ?></div><div class="s">Documents, consent or first meeting still open</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer; border-color:var(--warn, #f59e0b);" href="<?= h(url($base . '/pending.php')) ?>"><div class="l" style="color:var(--warn, #f59e0b); font-weight:700;">⏳ Pending Tracker (Click)</div><div class="v"><?= $pendingTotalCases ?></div><div class="s">Documents: <?= $pendingDocsCases ?> · Consent: <?= $pendingConsents ?> · 1st meeting: <?= $pendingMeetings ?> &rarr;</div></a>
-  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> non-Italy offers</div></a>
+  <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="<?= h(url($base . '/students.php?kpi=visa_granted')) ?>"><div class="l">Visa granted</div><div class="v"><?= $granted ?></div><div class="s"><?= $refused ?> refused · <?= $offers ?> offers received</div></a>
   <a class="kpi" style="text-decoration:none; color:inherit; cursor:pointer;" href="#followups-panel"><div class="l">Follow-ups due</div><div class="v <?= $dueNow ? 'bad-t' : '' ?>"><?= $dueNow ?></div><div class="s">Today or overdue</div></a>
 </div>
 
@@ -304,16 +324,18 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
       if (($r['offer'] ?? '') === 'Yes') $countryStats[$cName]['offers']++;
   }
   uasort($countryStats, fn($a, $b) => $b['total'] <=> $a['total']);
+  // applications of the students on this dashboard only (scoped), by the student's country
   $appCountsByCountry = [];
-  foreach (q("SELECT country, COUNT(*) AS cnt FROM student_applications GROUP BY country")->fetchAll() as $ar) {
-      $appCountsByCountry[$ar['country']] = (int)$ar['cnt'];
+  foreach ($rows as $r) {
+      $cName = trim((string)($r['country'] ?? '')) ?: 'Other';
+      $appCountsByCountry[$cName] = ($appCountsByCountry[$cName] ?? 0) + ($dashApps[(int)$r['id']] ?? 0);
   }
 ?>
 <section class="panel" style="margin-bottom:1.25rem;">
   <div class="panel-h">
     <div>
-      <h2>🌍 Multi-Country Operations Overview</h2>
-      <p>Click any destination country to view and manage its students, officers, pending items, and university applications</p>
+      <h2>🌍 <?= $admin ? 'Multi-Country Operations Overview' : (count($countryStats) > 1 ? 'My countries' : 'My country') ?></h2>
+      <p>Click a country to see its students, pending items and university applications</p>
     </div>
     <div class="row-actions">
       <a class="btn sm" href="<?= h(url($base . '/pending.php')) ?>">⏳ Full Pending Breakdown &rarr;</a>
