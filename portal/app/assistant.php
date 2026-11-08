@@ -17,8 +17,8 @@ declare(strict_types=1);
  *   GEMINI_API_KEY, GEMINI_MODEL (default gemini-2.5-flash), ASSISTANT_ENABLED (1/0).
  */
 
-const ASSISTANT_DEFAULT_MODEL = 'gemini-2.5-flash';
-const ASSISTANT_MODELS = ['gemini-2.5-flash' => 'Gemini 2.5 Flash (recommended)', 'gemini-2.5-flash-lite' => 'Gemini 2.5 Flash-Lite (faster, higher free limits)', 'gemini-2.0-flash' => 'Gemini 2.0 Flash'];
+const ASSISTANT_DEFAULT_MODEL = 'gemini-3.8-flash';
+const ASSISTANT_MODELS = ['gemini-3.8-flash' => 'Gemini 3.8 Flash (latest, recommended)', 'gemini-3.7-flash' => 'Gemini 3.7 Flash', 'gemini-3.1-pro-preview' => 'Gemini 3.1 Pro (preview, slower)'];
 const ASSISTANT_PER_MINUTE = 10;      // messages per person per minute (protects the free quota)
 const ASSISTANT_HISTORY_TURNS = 10;   // earlier messages sent back to Gemini for context
 const ASSISTANT_MAX_TOOL_ROUNDS = 5;
@@ -26,7 +26,10 @@ const ASSISTANT_MAX_TOOL_ROUNDS = 5;
 function assistant_key(): string { return trim((string)setting('GEMINI_API_KEY', '')); }
 function assistant_model(): string {
     $m = trim((string)setting('GEMINI_MODEL', ASSISTANT_DEFAULT_MODEL));
-    return preg_match('/^[a-z0-9.\-]+$/i', $m) ? $m : ASSISTANT_DEFAULT_MODEL;
+    $m = preg_replace('#^models/#', '', $m);
+    // Gemini 1.x / 2.x are closed to new keys — use the current model instead of failing
+    if ($m === '' || preg_match('/^gemini-(1|2)\./', $m) || !preg_match('/^[a-z0-9.\-]+$/i', $m)) return ASSISTANT_DEFAULT_MODEL;
+    return $m;
 }
 function assistant_enabled(): bool { return assistant_key() !== '' && (string)setting('ASSISTANT_ENABLED', '1') !== '0'; }
 function assistant_endpoint(string $model): string {
@@ -36,7 +39,14 @@ function assistant_endpoint(string $model): string {
 
 /** Gemini 2.5 models "think" before answering; keep that small (or off) so replies stay quick. */
 function assistant_gen_config(array $cfg, int $thinking): array {
-    if (str_starts_with(assistant_model(), 'gemini-2.5')) $cfg['thinkingConfig'] = ['thinkingBudget' => $thinking];
+    $m = assistant_model();
+    if (preg_match('/^gemini-(3|4)/', $m) || !str_starts_with($m, 'gemini-2')) {
+        // Gemini 3 / 4: thinking is set by level (low keeps replies quick); temperature is no longer used
+        unset($cfg['temperature']);
+        $cfg['thinkingConfig'] = ['thinkingLevel' => 'low'];
+    } elseif (str_starts_with($m, 'gemini-2.5')) {
+        $cfg['thinkingConfig'] = ['thinkingBudget' => $thinking];
+    }
     return $cfg;
 }
 
@@ -64,6 +74,7 @@ function gemini_request(array $body, int $timeout = 45): array {
         $msg = is_array($j) ? (string)($j['error']['message'] ?? 'Unknown error') : 'Unexpected reply';
         if ($code === 429) $msg = 'The free Gemini limit was reached for the moment. Please try again in a minute.';
         elseif (in_array($code, [400, 401, 403], true) && stripos($msg, 'key') !== false) $msg = 'The Gemini API key was rejected. Ask the Super Admin to check it in Team → System.';
+        elseif ($code === 404 || stripos($msg, 'no longer available') !== false || stripos($msg, 'not found') !== false) $msg = 'The Gemini model "' . assistant_model() . '" is not available for this key. The Super Admin can pick another model in Team → System → AI assistant.';
         return [false, $msg, $code];
     }
     return [true, $j, $code];
@@ -475,7 +486,9 @@ function assistant_chat(array $u, string $message): array {
             $name = (string)$c['functionCall']['name']; $args = (array)($c['functionCall']['args'] ?? []);
             $result = assistant_run_tool($u, $name, $args);
             $used[] = ['tool' => $name, 'args' => $args, 'forbidden' => ($result['error'] ?? '') === 'forbidden'];
-            $responses[] = ['functionResponse' => ['name' => $name, 'response' => ['result' => $result]]];
+            $fr = ['name' => $name, 'response' => ['result' => $result]];
+            if (!empty($c['functionCall']['id'])) $fr['id'] = $c['functionCall']['id'];   // Gemini 3+: reply must carry the call id
+            $responses[] = ['functionResponse' => $fr];
         }
         $contents[] = ['role' => 'user', 'parts' => $responses];
     }

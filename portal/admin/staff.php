@@ -41,7 +41,10 @@ if (is_post()) {
         if ($key !== '') set_setting('GEMINI_API_KEY', $key);
         if (post('gemini_key_remove') === '1') set_setting('GEMINI_API_KEY', '');
         $model = (string)post('gemini_model');
-        set_setting('GEMINI_MODEL', array_key_exists($model, ASSISTANT_MODELS) ? $model : ASSISTANT_DEFAULT_MODEL);
+        $custom = preg_replace('#^models/#', '', trim((string)post('gemini_model_custom')));
+        if ($custom !== '' && preg_match('/^[a-z0-9.\-]{3,60}$/i', $custom)) $model = $custom;
+        elseif (!array_key_exists($model, ASSISTANT_MODELS)) $model = ASSISTANT_DEFAULT_MODEL;
+        set_setting('GEMINI_MODEL', $model);
         set_setting('ASSISTANT_ENABLED', post('assistant_enabled') === '1' ? '1' : '0');
         log_activity('settings', null, 'assistant_settings', null, ['model' => assistant_model(), 'enabled' => post('assistant_enabled') === '1', 'key_changed' => $key !== ''], (int)$u['id']);
         flash('AI assistant settings saved.');
@@ -318,6 +321,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
       <form method="post" class="fields"><?= csrf_field() ?><input type="hidden" name="action" value="ai_settings">
         <label class="f"><span>Gemini API key</span><input type="password" name="gemini_key" autocomplete="new-password" placeholder="<?= $aiKey !== '' ? '•••• ' . h(substr($aiKey, -4)) . ' (saved — leave empty to keep)' : 'Paste your key' ?>" <?= $aiFromEnv ? 'disabled title="Set by the GEMINI_API_KEY environment variable"' : '' ?>></label>
         <label class="f"><span>Model</span><select name="gemini_model"><?php foreach (ASSISTANT_MODELS as $mk => $ml): ?><option value="<?= h($mk) ?>" <?= assistant_model() === $mk ? 'selected' : '' ?>><?= h($ml) ?></option><?php endforeach; ?></select></label>
+        <label class="f"><span>Or another model name</span><input name="gemini_model_custom" value="<?= array_key_exists(assistant_model(), ASSISTANT_MODELS) ? '' : h(assistant_model()) ?>" placeholder="e.g. a newer model from AI Studio" autocomplete="off"></label>
         <label class="f chk"><span>Assistant</span><span><input type="checkbox" name="assistant_enabled" value="1" <?= (string)setting('ASSISTANT_ENABLED', '1') !== '0' ? 'checked' : '' ?>> Show it to everyone</span></label>
         <?php if ($aiKey !== '' && !$aiFromEnv): ?><label class="f chk"><span>&nbsp;</span><span><input type="checkbox" name="gemini_key_remove" value="1"> Remove the saved key</span></label><?php endif; ?>
         <div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Save assistant settings</button></div>
