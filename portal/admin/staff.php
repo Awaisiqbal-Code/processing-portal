@@ -36,6 +36,22 @@ if (is_post()) {
         flash('Email settings saved.');
         redirect('admin/staff.php#system');
     }
+    if ($action === 'ai_settings' && $isSuper) {
+        $key = trim((string)post('gemini_key'));
+        if ($key !== '') set_setting('GEMINI_API_KEY', $key);
+        if (post('gemini_key_remove') === '1') set_setting('GEMINI_API_KEY', '');
+        $model = (string)post('gemini_model');
+        set_setting('GEMINI_MODEL', array_key_exists($model, ASSISTANT_MODELS) ? $model : ASSISTANT_DEFAULT_MODEL);
+        set_setting('ASSISTANT_ENABLED', post('assistant_enabled') === '1' ? '1' : '0');
+        log_activity('settings', null, 'assistant_settings', null, ['model' => assistant_model(), 'enabled' => post('assistant_enabled') === '1', 'key_changed' => $key !== ''], (int)$u['id']);
+        flash('AI assistant settings saved.');
+        redirect('admin/staff.php#system');
+    }
+    if ($action === 'ai_test' && $isSuper) {
+        [$ok, $m] = assistant_test();
+        flash($ok ? $m : 'Gemini test failed: ' . $m, $ok ? 'ok' : 'bad');
+        redirect('admin/staff.php#system');
+    }
     if ($action === 'mail_test' && $isSuper) {
         [$ok, $err] = send_mail((string)($u['email'] ?? '') ?: (string)post('to'), 'Portal email test', "This is a test email from the ScholarshipHive portal.
 If you can read this, password reset codes will arrive too.");
@@ -295,6 +311,18 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
       <form method="post" class="row-actions" style="margin-top:8px"><?= csrf_field() ?><input type="hidden" name="action" value="mail_test">
         <?php if (empty($u['email'])): ?><input type="email" name="to" placeholder="Send test to…" required aria-label="Test address"><?php endif; ?>
         <button class="btn sm" type="submit" <?= mail_ready() ? '' : 'disabled' ?>>Send a test email<?= !empty($u['email']) ? ' to ' . h($u['email']) : '' ?></button></form>
+    </details>
+    <?php $aiKey = assistant_key(); $aiFromEnv = getenv('GEMINI_API_KEY') !== false && getenv('GEMINI_API_KEY') !== ''; ?>
+    <details class="mail-box" <?= $aiKey === '' ? 'open' : '' ?>><summary><b>AI assistant (Gemini)</b> — <?= assistant_enabled() ? '<span class="pill sm ok">On for everyone</span>' : ($aiKey === '' ? '<span class="pill sm warn">No API key</span>' : '<span class="pill sm">Turned off</span>') ?></summary>
+      <p class="small muted">A chat + voice assistant on every page. It answers from portal data and follows each person's access: officers only get their own students, team-wide answers only for Admin / PMS Lead (with “reports” access), students only their own file. It never changes data. Get a key at <b>aistudio.google.com → Get API key</b>. Note: on Google's free tier, Google may use the questions and the student data sent with them to improve its products — enable billing on the key for full privacy.</p>
+      <form method="post" class="fields"><?= csrf_field() ?><input type="hidden" name="action" value="ai_settings">
+        <label class="f"><span>Gemini API key</span><input type="password" name="gemini_key" autocomplete="new-password" placeholder="<?= $aiKey !== '' ? '•••• ' . h(substr($aiKey, -4)) . ' (saved — leave empty to keep)' : 'Paste your key' ?>" <?= $aiFromEnv ? 'disabled title="Set by the GEMINI_API_KEY environment variable"' : '' ?>></label>
+        <label class="f"><span>Model</span><select name="gemini_model"><?php foreach (ASSISTANT_MODELS as $mk => $ml): ?><option value="<?= h($mk) ?>" <?= assistant_model() === $mk ? 'selected' : '' ?>><?= h($ml) ?></option><?php endforeach; ?></select></label>
+        <label class="f chk"><span>Assistant</span><span><input type="checkbox" name="assistant_enabled" value="1" <?= (string)setting('ASSISTANT_ENABLED', '1') !== '0' ? 'checked' : '' ?>> Show it to everyone</span></label>
+        <?php if ($aiKey !== '' && !$aiFromEnv): ?><label class="f chk"><span>&nbsp;</span><span><input type="checkbox" name="gemini_key_remove" value="1"> Remove the saved key</span></label><?php endif; ?>
+        <div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Save assistant settings</button></div>
+      </form>
+      <form method="post" class="row-actions" style="margin-top:8px"><?= csrf_field() ?><input type="hidden" name="action" value="ai_test"><button class="btn sm" type="submit" <?= $aiKey === '' ? 'disabled' : '' ?>>Test the connection</button></form>
     </details>
     <?php if (!$onVolume): ?><div class="flash warn" style="margin:6px 0 0">This server keeps the database on temporary disk<?= getenv('VERCEL') ? ' (Vercel runs several copies, each with its own database)' : '' ?>. Changes can be lost on restart, and “one device per account” cannot be guaranteed across copies. Run the portal on Railway with the <code>/data</code> volume for permanent data.</div><?php endif; ?>
   </div>

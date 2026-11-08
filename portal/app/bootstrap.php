@@ -48,7 +48,7 @@ if (!headers_sent()) {
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: same-origin');
-    header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
+    header('Permissions-Policy: camera=(), microphone=(self), geolocation=()');
     header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'");
     header('Cache-Control: no-store, no-cache, must-revalidate');
     header('Pragma: no-cache');
@@ -173,12 +173,13 @@ require APP . '/workflow.php';
 require APP . '/staff.php';
 require APP . '/quick_actions.php';
 require APP . '/password.php';
+require APP . '/assistant.php';
 
 // Apply pending additive schema migrations automatically (once) so a plain `php -S` run works too.
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
         $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '010_tax_meeting_reset_country'")->fetchColumn();
+            && q("SELECT 1 FROM schema_migrations WHERE version = '011_assistant'")->fetchColumn();
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();

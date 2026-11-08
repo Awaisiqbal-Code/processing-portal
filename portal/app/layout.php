@@ -317,6 +317,7 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 function page_end(): void { ?>
 </main>
 </div>
+<?php assistant_widget(); ?>
 </body>
 </html>
 <?php }
@@ -402,3 +403,40 @@ function last_remarks_cell(array $r): string {
          . '<div class="remark-cell-text">' . $previewText . '</div>'
          . '</button>';
 }
+
+
+/** Floating PMS Assistant (chat + voice) for every signed-in person, once the Gemini key is set. */
+function assistant_widget(): void {
+    $u = current_user();
+    if (!$u || !function_exists('assistant_enabled') || !assistant_enabled()) return;
+    $first = explode(' ', trim((string)$u['name']))[0];
+    if ($u['role'] === 'student') {
+        $chips = ['Meri file kahan tak pohanchi?', 'Mere kaun se documents baqi hain?', 'Meri applications ka status?'];
+    } elseif (in_array($u['role'], ['super_admin', 'admin', 'pms_lead'], true)) {
+        $chips = ['Aaj team ka kya pending hai?', 'Kis officer ke paas sab se zyada pending hai?', 'Is mahine kitne naye students aaye?', 'Kitni applications submit honi baqi hain?'];
+    } else {
+        $chips = ['Aaj mera kya pending hai?', 'Kin students ki recording baqi hai?', 'Meri kitni applications submit honi hain?', 'Pichle hafte kya kya hua?'];
+    } ?>
+<div id="pms-assistant" class="ai-wrap" data-api="<?= h(url('assistant_api.php')) ?>" data-csrf="<?= h(csrf_token()) ?>" data-name="<?= h($first) ?>" data-chips="<?= h(json_encode($chips, JSON_UNESCAPED_UNICODE)) ?>">
+  <button type="button" class="ai-fab" aria-label="Open PMS Assistant" aria-expanded="false" aria-controls="ai-panel">
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 2l1.9 4.6L18.5 8.5l-4.6 1.9L12 15l-1.9-4.6L5.5 8.5l4.6-1.9L12 2zm6.5 11l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1 1-2.5zM6 15l.8 1.9 1.9.8-1.9.8L6 20.4l-.8-1.9-1.9-.8 1.9-.8L6 15z"/></svg>
+  </button>
+  <section id="ai-panel" class="ai-panel" role="dialog" aria-label="PMS Assistant" hidden>
+    <header class="ai-head">
+      <div class="ai-title"><span class="ai-dot"></span><div><b>PMS Assistant</b><small>Answers from your portal data</small></div></div>
+      <div class="ai-head-btns">
+        <button type="button" class="ai-icon" data-ai="clear" title="New chat" aria-label="New chat"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+        <button type="button" class="ai-icon" data-ai="close" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.3 5.7L12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z"/></svg></button>
+      </div>
+    </header>
+    <div class="ai-msgs" aria-live="polite"></div>
+    <form class="ai-input" autocomplete="off">
+      <div class="ai-rec" hidden><span class="ai-rec-dot"></span><span class="ai-rec-t">0:00</span><span class="ai-rec-l">Listening… tap the mic to stop</span></div>
+      <textarea rows="1" placeholder="Ask anything… e.g. Ali ka kya scene hai?" aria-label="Message"></textarea>
+      <button type="button" class="ai-mic" aria-label="Speak your question" title="Speak"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2z"/></svg></button>
+      <button type="submit" class="ai-send" aria-label="Send"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3.4 20.4L21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg></button>
+    </form>
+  </section>
+</div>
+<script src="<?= h(asset_url('assets/assistant.js')) ?>" defer></script>
+<?php }
