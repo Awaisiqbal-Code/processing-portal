@@ -50,18 +50,27 @@ function assistant_gen_config(array $cfg, int $thinking): array {
     return $cfg;
 }
 
-/** One call to Gemini. Returns [ok, decoded response | error message, http code]. */
-function gemini_request(array $body, int $timeout = 45): array {
-    $key = assistant_key();
-    if ($key === '') return [false, 'The assistant is not set up yet (no Gemini API key).', 0];
-    if (!function_exists('curl_init')) return [false, 'The server is missing the PHP curl extension.', 0];
-    $ch = curl_init(assistant_endpoint(assistant_model()));
+/** Seconds left before the hosting time limit (Vercel stops a request after 30 s). */
+function assistant_time_left(): float {
+    $start = (float)($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));
+    return 27.0 - (microtime(true) - $start);
+}
+/** Models to try, in order: the chosen one, then another current Flash model if Google says it is busy. */
+function assistant_model_chain(): array {
+    $m = assistant_model();
+    $fallback = trim((string)setting('GEMINI_FALLBACK_MODEL', $m === 'gemini-3.7-flash' ? 'gemini-3.8-flash' : 'gemini-3.7-flash'));
+    return array_values(array_unique(array_filter([$m, $fallback])));
+}
+
+/** One HTTP call to one model. */
+function gemini_http(string $model, array $body, int $timeout): array {
+    $ch = curl_init(assistant_endpoint($model));
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => $timeout,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-goog-api-key: ' . $key],
+        CURLOPT_TIMEOUT => max(5, $timeout),
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'x-goog-api-key: ' . assistant_key()],
         CURLOPT_POSTFIELDS => json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE),
     ]);
     $raw = curl_exec($ch);
@@ -70,14 +79,50 @@ function gemini_request(array $body, int $timeout = 45): array {
     curl_close($ch);
     if ($raw === false) return [false, 'Could not reach Gemini: ' . $err, 0];
     $j = json_decode((string)$raw, true);
-    if ($code !== 200 || !is_array($j)) {
-        $msg = is_array($j) ? (string)($j['error']['message'] ?? 'Unknown error') : 'Unexpected reply';
-        if ($code === 429) $msg = 'The free Gemini limit was reached for the moment. Please try again in a minute.';
-        elseif (in_array($code, [400, 401, 403], true) && stripos($msg, 'key') !== false) $msg = 'The Gemini API key was rejected. Ask the Super Admin to check it in Team → System.';
-        elseif ($code === 404 || stripos($msg, 'no longer available') !== false || stripos($msg, 'not found') !== false) $msg = 'The Gemini model "' . assistant_model() . '" is not available for this key. The Super Admin can pick another model in Team → System → AI assistant.';
-        return [false, $msg, $code];
-    }
+    if ($code !== 200 || !is_array($j)) return [false, is_array($j) ? (string)($j['error']['message'] ?? 'Unknown error') : 'Unexpected reply', $code];
     return [true, $j, $code];
+}
+
+/**
+ * One request to Gemini, with automatic recovery: when Google is busy (503 "high demand", 500, 429)
+ * it waits a moment and retries, then moves to the fallback model. Once a model works it is kept for
+ * the rest of this answer (tool rounds must stay on one model).
+ * Returns [ok, decoded response | error message, http code].
+ */
+function gemini_request(array $body, int $timeout = 45): array {
+    static $sticky = null;
+    if (assistant_key() === '') return [false, 'The assistant is not set up yet (no Gemini API key).', 0];
+    if (!function_exists('curl_init')) return [false, 'The server is missing the PHP curl extension.', 0];
+    $chain = $sticky ? [$sticky] : assistant_model_chain();
+    $last = [false, 'Unknown error', 0];
+    foreach ($chain as $mi => $model) {
+        foreach ([0, 1.2, 2.5] as $try => $wait) {
+            if ($wait > 0) {
+                if (assistant_time_left() < $wait + 6) break 2;
+                usleep((int)($wait * 1e6));
+            }
+            $t = (int)min($timeout, max(5, assistant_time_left() - 1));
+            $last = gemini_http($model, $body, $t);
+            [$ok, , $code] = $last;
+            if ($ok) { $sticky = $model; return $last; }
+            $busy = in_array($code, [429, 500, 502, 503, 504], true) || $code === 0;
+            if (!$busy) {
+                // model closed / unknown -> try the next model; anything else (bad key, bad request) -> stop
+                if ($code === 404 || stripos((string)$last[1], 'no longer available') !== false) continue 2;
+                break 2;
+            }
+            if ($code === 429 && stripos((string)$last[1], 'per day') !== false) continue 2;   // daily quota: retrying won't help
+            if ($try >= 1 && $mi + 1 < count($chain)) continue 2;                                // busy twice: switch model
+        }
+    }
+    [, $msg, $code] = $last;
+    $msg = (string)$msg;
+    if ($code === 429) $msg = 'Gemini ki free limit is waqt poori ho gayi hai. Ek do minute baad dobara poochein.';
+    elseif (in_array($code, [500, 502, 503, 504], true) || stripos($msg, 'high demand') !== false || stripos($msg, 'overloaded') !== false) $msg = 'Gemini (Google) is waqt bohat busy hai — maine dobara koshish ki lekin jawab nahi mila. Thodi der baad dobara poochein.';
+    elseif (in_array($code, [400, 401, 403], true) && stripos($msg, 'key') !== false) $msg = 'The Gemini API key was rejected. Ask the Super Admin to check it in Team → System.';
+    elseif ($code === 404 || stripos($msg, 'no longer available') !== false || stripos($msg, 'not found') !== false) $msg = 'The Gemini model "' . assistant_model() . '" is not available for this key. The Super Admin can pick another model in Team → System → AI assistant.';
+    elseif ($code === 0) $msg = 'Gemini tak pohanch nahi saka (internet/timeout). Dobara koshish karein.';
+    return [false, $msg, $code];
 }
 
 // ---------------------------------------------------------------- access helpers
