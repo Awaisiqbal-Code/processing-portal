@@ -342,6 +342,11 @@ if (is_post() && post('action') === 'save') {
         exit('Access denied.');
     }
 
+    // first + last name -> the full name used everywhere
+    if (array_key_exists('first_name', $_POST) || array_key_exists('last_name', $_POST)) {
+        $_POST['name'] = compose_student_name(post('first_name'), post('last_name'));
+        if (mb_strlen(trim(post('first_name'))) < 2) $errors[] = 'Enter the first name.';
+    }
     $data = [];
     foreach (FIELD_GROUPS as $fields) {
         foreach ($fields as $k => $f) {
@@ -364,6 +369,10 @@ if (is_post() && post('action') === 'save') {
         }
     }
     if (!$data['name']) $errors[] = 'Enter the student name.';
+    if (array_key_exists('first_name', $_POST) || array_key_exists('last_name', $_POST)) {
+        $fnv = trim(mb_substr(post('first_name'), 0, 80)); $lnv = trim(mb_substr(post('last_name'), 0, 80));
+        $data['first_name'] = $fnv !== '' ? $fnv : null; $data['last_name'] = $lnv !== '' ? $lnv : null;
+    }
     if (array_key_exists('docs_source', $_POST)) {
         $data['docs_source'] = in_array(post('docs_source'), ['drive', 'upload'], true) ? post('docs_source') : null;
     }
@@ -764,6 +773,11 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
         if ($isNew && in_array($k, ['pending_docs_note', 'docs_checklist'], true)) continue;
         $v = (string)($r[$k] ?? '');
         if (str_starts_with($k, 'installment_')) $v = clean_amount($v);
+        if ($k === 'name'):
+            [$nmFirst, $nmLast] = $isNew ? [(string)($_POST['first_name'] ?? ''), (string)($_POST['last_name'] ?? '')] : student_name_parts($r); ?>
+      <label class="f"><span>First name *</span><input name="first_name" value="<?= h($nmFirst) ?>" required minlength="2" maxlength="80" placeholder="As on passport" autocomplete="off" <?= $isCounselor ? 'readonly' : '' ?>></label>
+      <label class="f"><span>Last name</span><input name="last_name" value="<?= h($nmLast) ?>" maxlength="80" placeholder="Surname / family name" autocomplete="off" <?= $isCounselor ? 'readonly' : '' ?>></label>
+      <?php continue; endif;
         $wide = in_array($f[1], ['textarea', 'readonly_textarea', 'url'], true) || in_array($k, ['disc2', 'disc3'], true) ? ' wide' : ''; ?>
       <label class="f<?= $wide ?>"><span><?= h($f[0]) ?><?= $k === 'name' ? ' *' : '' ?></span>
       <?php switch ($f[1]):

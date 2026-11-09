@@ -48,7 +48,7 @@ if (is_post() && post('action') === 'quick_add') {
         flash('Student registered. Their profile is ready — add documents and details below.');
         redirect($base . '/student.php?id=' . (int)$res['id'] . '&created=1');
     }
-    $old = array_intersect_key($_POST, array_flip(['name', 'contact_number', 'email', 'country', 'program_level', 'intake', 'applied_for', 'branch', 'received_date', 'assigned_counselor_id', 'frontend_officer_id', 'officer_id', 'first_note']));
+    $old = array_intersect_key($_POST, array_flip(['name', 'first_name', 'last_name', 'contact_number', 'email', 'country', 'program_level', 'intake', 'applied_for', 'branch', 'received_date', 'assigned_counselor_id', 'frontend_officer_id', 'officer_id', 'first_note']));
     if (!empty($res['duplicate_id'])) $old['_duplicate_id'] = (int)$res['duplicate_id'];
     $_SESSION['quick_add_old'] = $old;
     flash($res['error'] ?? 'Could not register the student.', 'bad');

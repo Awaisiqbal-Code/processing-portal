@@ -410,6 +410,20 @@ function can_quick_add_student(array $u): bool {
     return ($u['role'] ?? '') === 'super_admin' || (in_array($u['role'] ?? '', ['admin', 'pms_lead', 'processing_staff', 'officer'], true) && user_can($u, 'students.add'));
 }
 
+/** Joins first + last name into the full name used everywhere ("" parts are skipped). */
+function compose_student_name(?string $first, ?string $last): string {
+    $clean = fn($x) => trim(preg_replace('/\s+/u', ' ', mb_substr((string)$x, 0, 80)));
+    return trim($clean($first) . ' ' . $clean($last));
+}
+/** [first, last] for a student row: the saved parts when they still match the full name, else the full name split at the last space. */
+function student_name_parts(array $r): array {
+    $full = trim(preg_replace('/\s+/u', ' ', (string)($r['name'] ?? '')));
+    $f = trim((string)($r['first_name'] ?? '')); $l = trim((string)($r['last_name'] ?? ''));
+    if ($f !== '' && compose_student_name($f, $l) === $full) return [$f, $l];
+    $pos = mb_strrpos($full, ' ');
+    return $pos === false ? [$full, ''] : [mb_substr($full, 0, $pos), mb_substr($full, $pos + 1)];
+}
+
 /**
  * Creates a student from the short registration form with role-based assignment:
  *  - Front-end login: front-end officer = the logged-in user (locked); back-end officer is chosen.
@@ -426,9 +440,14 @@ function quick_register_student(array $actor, array $in): array {
     $cnIds = array_map(fn($o) => (int)$o['id'], $opts['counselor']);
     $names = staff_name_map();
 
-    $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 150));
+    $hasParts = array_key_exists('first_name', $in) || array_key_exists('last_name', $in);
+    $firstName = trim(mb_substr((string)($in['first_name'] ?? ''), 0, 80));
+    $lastName = trim(mb_substr((string)($in['last_name'] ?? ''), 0, 80));
+    $name = $hasParts ? compose_student_name($firstName, $lastName) : trim(mb_substr((string)($in['name'] ?? ''), 0, 150));
+    if (!$hasParts) [$firstName, $lastName] = student_name_parts(['name' => $name]);
     $errors = [];
-    if (mb_strlen($name) < 2) $errors[] = 'Enter the student name.';
+    if ($hasParts && mb_strlen($firstName) < 2) $errors[] = 'Enter the first name.';
+    elseif (mb_strlen($name) < 2) $errors[] = 'Enter the student name.';
     $country = trim((string)($in['country'] ?? ''));
     $countries = array_merge(SUPPORTED_COUNTRIES, ['Other']);
     if (!in_array($country, $countries, true)) $errors[] = 'Choose a destination country.';
@@ -465,6 +484,8 @@ function quick_register_student(array $actor, array $in): array {
 
     $data = [
         'name'                  => $name,
+        'first_name'            => $firstName !== '' ? $firstName : null,
+        'last_name'             => $lastName !== '' ? $lastName : null,
         'country'               => $country,
         'program_level'         => $level,
         'intake'                => trim(mb_substr((string)($in['intake'] ?? ''), 0, 60)) ?: null,

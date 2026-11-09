@@ -35,7 +35,10 @@ $qaSel = fn(string $k, $val) => ((string)($qaOld[$k] ?? '') === (string)$val) ? 
     <div class="qa-body">
       <div class="qa-section-title">Student</div>
       <div class="qa-grid">
-        <label class="f qa-span2"><span>Full name *</span><input name="name" required minlength="2" maxlength="150" value="<?= $qaV('name') ?>" placeholder="As written on passport"></label>
+        <?php [$qaFirst, $qaLast] = isset($qaOld['first_name']) || isset($qaOld['last_name']) ? [(string)($qaOld['first_name'] ?? ''), (string)($qaOld['last_name'] ?? '')] : student_name_parts(['name' => (string)($qaOld['name'] ?? '')]); ?>
+        <label class="f"><span>First name *</span><input name="first_name" required minlength="2" maxlength="80" value="<?= h($qaFirst) ?>" placeholder="As on passport" autocomplete="off"></label>
+        <label class="f"><span>Last name</span><input name="last_name" maxlength="80" value="<?= h($qaLast) ?>" placeholder="Surname / family name" autocomplete="off"></label>
+        <p class="small muted qa-span2" style="margin:-4px 0 0">Full name is saved as first + last, exactly as on the passport. If two students share a name, adjust the first or last name to tell them apart.</p>
         <label class="f"><span>Contact / WhatsApp</span><input name="contact_number" inputmode="tel" maxlength="20" value="<?= $qaV('contact_number') ?>" placeholder="+92 3xx xxxxxxx"></label>
         <label class="f"><span>Email</span><input type="email" name="email" maxlength="150" value="<?= $qaV('email') ?>" placeholder="student@email.com"></label>
       </div>
