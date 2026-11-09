@@ -599,8 +599,14 @@ function sync_docs_checklist(int $studentId): void {
     if (strtoupper(trim((string)($r['program_level'] ?? ''))) === 'BS') unset($required[4]);
     $all = true;
     foreach ($required as $i => $_) if (!in_array($st[$i] ?? '', DOC_IN_HAND, true)) $all = false;
+    if (docs_in_drive($r)) $all = true;
     // all required in hand -> the sheet column says Yes as well (never flipped back: a document asked for again is "Requested")
     if ($all && !sheet_docs_complete($r)) q("UPDATE students SET docs_checklist = 'Yes' WHERE id = ?", [$studentId]);
+}
+
+/** The officer chose "In Google Drive" and saved the folder link: the folder holds all the documents. */
+function docs_in_drive(array $r): bool {
+    return ($r['docs_source'] ?? '') === 'drive' && safe_link((string)($r['drive_link'] ?? '')) !== '';
 }
 
 function student_pending_docs(array $r, array $docStatus): array {
@@ -613,8 +619,10 @@ function student_pending_docs(array $r, array $docStatus): array {
     // That stands unless a document was asked for again in the portal ("Requested") or named in the note below.
     $sheetDone = sheet_docs_complete($r);
     $bySheet = 0;
+    $inDrive = docs_in_drive($r);
     foreach ($required as $i => $label) {
         $st = $docStatus[$i] ?? '';
+        if ($inDrive) { $inHand++; continue; }          // Drive folder = every required document is in hand
         if (in_array($st, DOC_IN_HAND, true)) $inHand++;
         elseif ($sheetDone && $st !== 'Requested') { $inHand++; $bySheet++; }
         else $missing[$i] = $label;

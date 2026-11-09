@@ -1463,6 +1463,7 @@ tr.is-sel td { background: var(--accent-soft); }
 .src-switch input:focus-visible + span { box-shadow: var(--focus-ring); }
 .docs-box[data-src="upload"] .src-drive { display: none; }
 .docs-box[data-src="drive"] .src-upload-only { display: none; }
+.docs-box[data-src="drive"][data-link="1"] .doc-grid { display: none; }
 .src-drive { background: var(--sunk); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row input { flex: 1; min-width: 0; }

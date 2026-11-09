@@ -872,6 +872,8 @@
       box.querySelectorAll('input[name="docs_source"]').forEach(function (r) {
         r.addEventListener('change', function () { if (r.checked) box.setAttribute('data-src', r.value); });
       });
+      var dl = box.querySelector('input[name="drive_link"]');
+      if (dl) dl.addEventListener('input', function () { box.setAttribute('data-link', /^https:\/\/\S+/.test(dl.value.trim()) ? '1' : '0'); });
     });
     // Meeting: Link / Upload video / Not recorded
     document.querySelectorAll('[data-meet]').forEach(function (m) {

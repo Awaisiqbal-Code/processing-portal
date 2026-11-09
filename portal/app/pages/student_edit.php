@@ -769,7 +769,8 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   <fieldset><legend><?= country_flag($activeCountry) ?> <?= h($group) ?></legend><div class="fields">
     <?php $sheetPays = $sheetPays ?? (!$isNew ? student_payments($r) : []);
       foreach ($fields as $k => $f):
-        if (!$isNew && in_array($k, ['drive_link', 'meeting_link', 'pending_docs_note', 'docs_checklist'], true)) continue;  // shown in Documents / Meeting sections
+        if ($k === 'drive_link') continue;   // the Drive folder link is entered once, in the Documents section
+        if (!$isNew && in_array($k, ['meeting_link', 'pending_docs_note', 'docs_checklist'], true)) continue;  // shown in Documents / Meeting sections
         if ($isNew && in_array($k, ['pending_docs_note', 'docs_checklist'], true)) continue;
         $v = (string)($r[$k] ?? '');
         if (str_starts_with($k, 'installment_')) $v = clean_amount($v);
@@ -867,7 +868,9 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
   </fieldset>
   <?php endif; ?>
 
-  <fieldset id="documents" class="docs-box" data-src="<?= h($docsSrc = (($r['docs_source'] ?? '') ?: (safe_link($r['drive_link'] ?? '') ? 'drive' : 'upload'))) ?>"><legend>Documents</legend>
+  <?php // "drive" / "upload" once an officer has chosen; imported students with only a sheet Drive link show both until someone chooses
+    $docsSrc = ($r['docs_source'] ?? '') ?: (safe_link($r['drive_link'] ?? '') ? 'unset' : 'upload'); ?>
+  <fieldset id="documents" class="docs-box" data-src="<?= h($docsSrc) ?>" data-link="<?= safe_link($r['drive_link'] ?? '') ? '1' : '0' ?>"><legend>Documents</legend>
     <?php
       $dsInfo = student_pending_docs($r, array_map(fn($d) => $d === 'Uploaded' ? 'Received' : $d, $docs));
       $dsPct = (int)round($dsInfo['in_hand'] / max(1, $dsInfo['required']) * 100);
@@ -880,7 +883,9 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <?php if (!$isNew): ?>
     <div class="doc-summary">
       <div class="doc-summary-row">
-        <?php if ($dsInfo['complete']): ?>
+        <?php if ($dsInfo['complete'] && docs_in_drive($r)): ?>
+          <span class="pill ok">✓ All documents are in Google Drive</span> <span class="small muted">· counted as Received</span>
+        <?php elseif ($dsInfo['complete']): ?>
           <span class="pill ok">✓ All required documents received</span><?php if ($dsInfo['by_sheet']): ?> <span class="small muted">· <?= $dsInfo['by_sheet'] ?> confirmed on the sheet (“Docs checklist”), not ticked one by one yet</span><?php endif; ?>
         <?php else: ?>
           <b class="bad-t"><?= $dsInfo['count'] ?> document<?= $dsInfo['count'] === 1 ? '' : 's' ?> pending</b>
@@ -899,7 +904,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <?php endif; ?>
 
     <div class="src-switch" role="radiogroup" aria-label="Where are the documents kept?">
-      <span class="small muted">Where are this student's documents?</span>
+      <span class="small muted">Where are this student's documents?<?= $docsSrc === 'unset' ? ' <b class="warn-t">Choose one</b>' : '' ?></span>
       <label><input type="radio" name="docs_source" value="drive" <?= $docsSrc === 'drive' ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span>📁 In Google Drive</span></label>
       <label><input type="radio" name="docs_source" value="upload" <?= $docsSrc === 'upload' ? 'checked' : '' ?> <?= $isCounselor ? 'disabled' : '' ?>><span>⬆ Upload here</span></label>
     </div>
@@ -908,7 +913,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
         <div class="input-row"><input type="url" name="drive_link" value="<?= h($r['drive_link'] ?? '') ?>" placeholder="https://drive.google.com/drive/folders/…" <?= $isCounselor ? 'readonly' : '' ?>>
         <?php if ($dlk = safe_link($r['drive_link'] ?? '')): ?><a class="btn sm" href="<?= h($dlk) ?>" target="_blank" rel="noopener noreferrer">Open folder ↗</a><?php endif; ?></div>
       </label>
-      <p class="small muted">Files stay in Drive. Just tick each document below as <b>Received</b> once it is in the folder.</p>
+      <p class="small muted src-drive-help">Once the folder link is saved, <b>all required documents count as Received</b> — no need to tick them one by one. Something still missing? Write it in <b>Other documents still needed</b> below.</p>
     </div>
 
     <div class="doc-grid">
@@ -946,7 +951,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
       </div>
     <?php endforeach; ?>
     </div>
-    <label class="f" style="margin-top:12px;"><span>Other documents still needed <small class="muted">(not in the list above — e.g. LOR, experience letter; leave empty when nothing else is needed)</small></span>
+    <label class="f" style="margin-top:12px;"><span>Other documents still needed <small class="muted">(e.g. LOR, experience letter — leave empty when nothing else is needed)</small></span>
       <input name="pending_docs_note" value="<?= h(doc_note_is_empty($r['pending_docs_note'] ?? '') ? '' : ($r['pending_docs_note'] ?? '')) ?>" placeholder="e.g. LOR, Experience letter" <?= $isCounselor ? 'readonly' : '' ?>>
     </label>
   </fieldset>
