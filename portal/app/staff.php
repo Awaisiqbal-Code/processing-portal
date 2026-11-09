@@ -36,6 +36,7 @@ const PAGE_PERMISSIONS = [
     'admin/pending_report.php'    => ['reports.view', 'reports.view'],
     'officer/reports.php'         => ['reports.view', 'reports.view'],
     'admin/export.php'            => ['data.export', 'data.export'],
+    'admin/backup.php'            => ['data.export', 'data.export'],
     'admin/programs.php'          => [null, 'programs.manage'],
     'officer/programs.php'        => [null, 'programs.manage'],
     'admin/consent_templates.php' => [null, 'consent.manage'],

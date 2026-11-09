@@ -1929,3 +1929,12 @@ details[open] > summary { color: var(--fg); }
   .ai-panel { position: fixed; left: 8px; right: 8px; bottom: 8px; top: 8px; width: auto; height: auto; border-radius: 18px; }
 }
 @media print { .ai-wrap { display: none !important; } }
+
+/* ===================== Backup page ===================== */
+.backup-kpis { margin: 14px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.backup-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin: 6px 0 16px; }
+.backup-card { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.backup-card b { font-size: 16px; color: var(--fg); }
+.backup-card p { margin: 6px 0 0; }
+.backup-card .btn { align-self: flex-start; }
+.backup-tree pre { margin: 10px 0 0; padding: 14px; border-radius: 12px; background: var(--sunk); border: 1px solid var(--line); overflow-x: auto; font-size: 13px; line-height: 1.55; color: var(--fg-body); }

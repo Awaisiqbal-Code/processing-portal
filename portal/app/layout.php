@@ -17,6 +17,7 @@ function nav_items(string $role): array {
             'admin/verify_docs.php'       => 'Verify documents',
             'admin/staff.php'             => 'Team',
             'admin/logins.php'            => 'Student logins',
+            'admin/backup.php'            => 'Backup',
         ],
         'admin' => [
             'admin/index.php'             => 'Dashboard',
@@ -32,6 +33,7 @@ function nav_items(string $role): array {
             'admin/verify_docs.php'       => 'Verify documents',
             'admin/staff.php'             => 'Team',
             'admin/logins.php'            => 'Student logins',
+            'admin/backup.php'            => 'Backup',
         ],
         'pms_lead' => [
             'officer/index.php'          => 'Dashboard',
@@ -84,6 +86,7 @@ function nav_icon(string $href): string {
         'applications'      => '<path d="M4 7h16v13H4z"/><path d="M8 7V4h8v3"/><path d="m9 13 2 2 4-4"/>',
         'roles'             => '<path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
         'logins'            => '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l2 2M15 8l2 2"/>',
+        'backup'            => '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M3 15v4a2 2 0 0 0 2 2"/><path d="M21 15v4a2 2 0 0 1-2 2"/>',
         default             => '<circle cx="12" cy="12" r="8"/>',
     };
     return '<svg viewBox="0 0 24 24" aria-hidden="true">' . $p . '</svg>';
