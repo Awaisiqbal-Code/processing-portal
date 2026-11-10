@@ -184,17 +184,32 @@ page_start($t['name'] . ' · Team', $u, PORTALS[$u['role']]['label']);
 
 <?php if (in_array($t['role'], CONFIGURABLE_PERM_ROLES, true)): ?>
 <section class="panel" id="access">
-  <div class="panel-h"><h2>Access</h2><p><?= h(STAFF_ROLE_OPTIONS[$role]) ?> can view every student, officer and report. <?= $isSuper ? 'Tick what they may also change.' : '' ?></p></div>
+  <div class="panel-h"><h2>Access</h2><p><?= h(STAFF_ROLE_OPTIONS[$role]) ?> can view every student, officer and report<?= $t['role'] === 'pms_lead' && extra_countries($id) ? ' of the countries they lead (' . h(implode(', ', extra_countries($id))) . ')' : '' ?>. <?= $isSuper ? 'Tick what they may also change.' : '' ?></p></div>
   <form method="post">
     <?= csrf_field() ?><input type="hidden" name="action" value="access"><input type="hidden" name="id" value="<?= $id ?>">
     <div class="perm-grid">
-      <label class="perm is-fixed"><input type="checkbox" checked disabled><span><b>View everything</b><small>All students, officers, pending tracker and dashboards.</small></span></label>
+      <label class="perm is-fixed"><input type="checkbox" checked disabled><span><b>View everything</b><small><?= $t['role'] === 'pms_lead' && extra_countries($id) ? 'Students, officers, pending tracker and dashboards of their countries.' : 'All students, officers, pending tracker and dashboards.' ?></small></span></label>
       <?php if ($t['role'] === 'pms_lead'): ?><label class="perm is-fixed"><input type="checkbox" checked disabled><span><b>Edit own students</b><small>Students where they are the front-end or back-end officer.</small></span></label><?php endif; ?>
       <?php foreach (PERMISSIONS as $pk => [$pl, $pd]): ?>
         <label class="perm"><input type="checkbox" name="perms[]" value="<?= h($pk) ?>" <?= in_array($pk, $perms, true) ? 'checked' : '' ?> <?= $isSuper ? '' : 'disabled' ?>><span><b><?= h($pl) ?></b><small><?= h($pd) ?></small></span></label>
       <?php endforeach; ?>
     </div>
     <?php if ($isSuper): ?><div class="actions" style="margin-top:12px"><button class="btn primary" type="submit">Save access</button></div><?php endif; ?>
+  </form>
+</section>
+<?php endif; ?>
+
+<?php if ($t['role'] === 'pms_lead'): $leadC = extra_countries($id); ?>
+<section class="panel" id="countries">
+  <div class="panel-h"><h2>Countries they lead</h2><p><?= $leadC ? 'They see only the students, officers and reports of the ticked countries.' : 'No country ticked yet, so they currently see every country. Tick one or more to limit them to those countries.' ?></p></div>
+  <form method="post">
+    <?= csrf_field() ?><input type="hidden" name="action" value="countries"><input type="hidden" name="id" value="<?= $id ?>">
+    <div class="perm-grid">
+      <?php foreach (array_values(array_unique(array_merge(SUPPORTED_COUNTRIES, all_countries()))) as $c): $on = in_array($c, $leadC, true); ?>
+        <label class="perm"><input type="checkbox" name="countries[]" value="<?= h($c) ?>" <?= $on ? 'checked' : '' ?> <?= $isSuper ? '' : 'disabled' ?>><span><b><?= country_flag($c) ?> <?= h($c) ?></b><small><?= $on ? 'Leads this country' : 'No access' ?></small></span></label>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($isSuper): ?><div class="actions" style="margin-top:12px"><button class="btn primary" type="submit">Save countries</button></div><?php endif; ?>
   </form>
 </section>
 <?php endif; ?>

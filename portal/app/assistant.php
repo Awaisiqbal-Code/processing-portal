@@ -130,6 +130,7 @@ function assistant_scope_label(array $u): string {
     $role = (string)$u['role'];
     if ($role === 'student') return 'only their own student record';
     if (in_array($role, ['super_admin', 'admin'], true)) return 'all students and the whole team';
+    if ($role === 'pms_lead' && ($lc = pms_lead_countries($u)) !== null) return 'students of ' . implode(', ', $lc) . ' only (their countries); team overview for those countries' . (user_can($u, 'reports.view') ? '' : ' is NOT allowed');
     if ($role === 'pms_lead') return 'all students; team overview' . (user_can($u, 'reports.view') ? '' : ' is NOT allowed');
     return 'only the students assigned to them (as front-end or back-end officer / counselor)';
 }
@@ -419,7 +420,9 @@ function tool_team_overview(array $u, array $a): array {
     if (!assistant_can_team($u)) return assistant_forbidden('Team-wide information (other officers\' students and workload) is only available to Admin and PMS Lead. I can help with your own students.');
     $officers = q("SELECT id, name, role, department FROM users WHERE active = 1 AND role IN ('officer','processing_staff','pms_lead','counselor') ORDER BY name")->fetchAll();
     if (!empty($a['officer'])) { $oid = a_find_user_id((string)$a['officer']); $officers = array_values(array_filter($officers, fn($o) => (int)$o['id'] === $oid)); if (!$officers) return ['note' => 'No staff member matches "' . $a['officer'] . '".']; }
-    $rows = q("SELECT * FROM students WHERE COALESCE(student_status,'') NOT IN ('Dropped','Disabled')")->fetchAll();
+    [$tw, $tp] = scope_sql($u, '');
+    $rows = q("SELECT * FROM students WHERE COALESCE(student_status,'') NOT IN ('Dropped','Disabled') AND $tw", $tp)->fetchAll();
+    if (pms_lead_countries($u) !== null) $officers = array_values(array_filter($officers, fn($o) => (int)$o['id'] === (int)$u['id'] || array_filter($rows, fn($r) => (int)$r['officer_id'] === (int)$o['id'] || (int)$r['frontend_officer_id'] === (int)$o['id'])));
     $docState = load_doc_state(); $apps = a_app_counts(); $per = [];
     foreach ($rows as $r) {
         $pi = null;

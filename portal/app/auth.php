@@ -597,12 +597,30 @@ function toggle_staff_active(array $actor, int $targetUserId): array {
     ];
 }
 
-/** SQL scope for staff: super_admin/admin/pms_lead sees all students, processing_staff/officer sees assigned, counselor sees assigned. */
+/**
+ * Countries a PMS Lead manages (set by the Super Admin in Team). null = no countries set, so the lead
+ * sees every country (the old behaviour). Other roles always get null here.
+ */
+function pms_lead_countries(array $u): ?array {
+    if (($u['role'] ?? '') !== 'pms_lead') return null;
+    try { $raw = q('SELECT countries FROM users WHERE id = ?', [(int)($u['id'] ?? 0)])->fetchColumn(); } catch (Throwable) { return null; }
+    $j = is_string($raw) && $raw !== '' ? json_decode($raw, true) : null;
+    $list = is_array($j) ? array_values(array_filter(array_map(fn($c) => trim((string)$c), $j))) : [];
+    return $list ?: null;
+}
+
+/** SQL scope for staff: super_admin/admin see all; a PMS Lead sees the countries given to them (all if none);
+ *  processing_staff/officer sees assigned, counselor sees assigned. */
 function scope_sql(array $u, string $alias = 's'): array {
+    $pfx = $alias !== '' ? "$alias." : '';
+    if ($u['role'] === 'pms_lead' && ($lc = pms_lead_countries($u)) !== null) {
+        $ph = implode(',', array_fill(0, count($lc), '?'));
+        return ["(LOWER(TRIM(COALESCE({$pfx}country, ''))) IN ($ph) OR {$pfx}officer_id = ? OR {$pfx}frontend_officer_id = ?)",
+                array_merge(array_map('strtolower', $lc), [(int)$u['id'], (int)$u['id']])];
+    }
     if (in_array($u['role'], ['super_admin', 'admin', 'pms_lead'], true)) {
         return ['1=1', []];
     }
-    $pfx = $alias !== '' ? "$alias." : '';
     if (in_array($u['role'], ['officer', 'processing_staff'], true)) {
         return ["({$pfx}officer_id = ? OR {$pfx}frontend_officer_id = ?)", [(int)$u['id'], (int)$u['id']]];
     }

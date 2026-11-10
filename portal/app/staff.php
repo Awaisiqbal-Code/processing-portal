@@ -240,6 +240,11 @@ function create_staff_member(array $actor, array $in): array {
     q('UPDATE users SET email = ?, phone = ?, branch = ?, job_title = ?, permissions = ? WHERE id = ?',
       [$d['email'], $d['phone'], $d['branch'], $d['job_title'], $perms, $id]);
     staff_log($id, 'created', null, STAFF_ROLE_OPTIONS[$role] . (is_officer_like_role($role) ? ' · ' . team_label($dept) : ''), 0, null, (int)$actor['id']);
+    if ($role === 'pms_lead') {
+        $valid = array_values(array_unique(array_merge(all_countries(), SUPPORTED_COUNTRIES)));
+        $lc = array_values(array_filter(array_map('strval', (array)($in['lead_countries'] ?? [])), fn($c) => in_array($c, $valid, true)));
+        if ($lc) q('UPDATE users SET countries = ? WHERE id = ?', [json_encode($lc), $id]);
+    }
     return ['ok' => true, 'user_id' => $id, 'credentials' => $res['credentials'], 'phone' => $d['phone'], 'email' => $d['email']];
 }
 
@@ -479,7 +484,8 @@ function extra_countries(int $userId): array {
 
 /** null = every country (leads and admins); otherwise the list of countries this person may see. */
 function user_countries(array $u): ?array {
-    if (in_array($u['role'] ?? '', ['super_admin', 'admin', 'pms_lead'], true)) return null;
+    if (($u['role'] ?? '') === 'pms_lead') return pms_lead_countries($u);
+    if (in_array($u['role'] ?? '', ['super_admin', 'admin'], true)) return null;
     $id = (int)($u['id'] ?? 0);
     return array_values(array_unique(array_merge(caseload_countries($id), extra_countries($id))));
 }
@@ -495,7 +501,7 @@ function can_see_country(array $u, ?string $country): bool {
 
 function set_extra_countries(array $actor, int $id, array $countries): array {
     if (($actor['role'] ?? '') !== 'super_admin') return ['ok' => false, 'error' => 'Only the Super Admin can give country access.'];
-    $valid = all_countries();
+    $valid = array_values(array_unique(array_merge(all_countries(), SUPPORTED_COUNTRIES)));
     $clean = array_values(array_filter(array_map('trim', array_map('strval', $countries)), fn($c) => in_array($c, $valid, true)));
     $old = extra_countries($id);
     q('UPDATE users SET countries = ? WHERE id = ?', [$clean ? json_encode($clean) : null, $id]);

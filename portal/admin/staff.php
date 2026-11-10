@@ -18,7 +18,7 @@ if (is_post()) {
             flash('Added ' . $n . ' as ' . (STAFF_ROLE_OPTIONS[$rl] ?? role_label($rl)) . '.');
             redirect('admin/staff.php#cred');
         }
-        $_SESSION['staff_add_old'] = array_intersect_key($_POST, array_flip(['name', 'username', 'email', 'phone', 'role', 'department', 'branch', 'job_title', 'perms']));
+        $_SESSION['staff_add_old'] = array_intersect_key($_POST, array_flip(['name', 'username', 'email', 'phone', 'role', 'department', 'branch', 'job_title', 'perms', 'lead_countries']));
         flash($res['error'], 'bad');
         redirect('admin/staff.php?add=1#add-person');
     }
@@ -262,7 +262,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
     <div class="role-cards" role="radiogroup" aria-label="Role">
       <?php foreach ([
           'processing_staff' => ['Processing Officer', 'Works on the students assigned to them (front end or back end).'],
-          'pms_lead'         => ['PMS Lead', 'Sees every officer’s work and students. Edits only their own students unless you allow more.'],
+          'pms_lead'         => ['PMS Lead', 'Leads one or more countries: sees all students and officers of the countries you tick below. Edits only their own students unless you allow more.'],
           'counselor'        => ['Counselor', 'Sees their own counselled students, read-only. Can add remarks.'],
           'admin'            => ['Admin', 'Oversees the whole portal. View only, unless you switch on access below.' . ($adminTaken ? ' (Only one Admin is allowed — one already exists.)' : '')],
         ] as $rk => [$rl, $rd]): ?>
@@ -278,8 +278,17 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
       </div>
     </div>
 
+    <div data-show-for="pms_lead">
+      <div class="step-h"><span>3</span> Countries they lead <small class="muted">— they see only these countries' students (tick one or more)</small></div>
+      <div class="perm-grid">
+        <?php $oldLc = (array)($old['lead_countries'] ?? []); foreach (array_values(array_unique(array_merge(SUPPORTED_COUNTRIES, all_countries()))) as $c): ?>
+          <label class="perm"><input type="checkbox" name="lead_countries[]" value="<?= h($c) ?>" <?= in_array($c, $oldLc, true) ? 'checked' : '' ?>><span><b><?= country_flag($c) ?> <?= h($c) ?></b><small>Students, officers &amp; reports of <?= h($c) ?></small></span></label>
+        <?php endforeach; ?>
+      </div>
+    </div>
+
     <div data-show-for="admin pms_lead">
-      <div class="step-h"><span>3</span> Access <small class="muted">— they can always view everything; tick what they may also change</small></div>
+      <div class="step-h"><span>4</span> Access <small class="muted">— they can always view everything; tick what they may also change</small></div>
       <div class="perm-grid">
         <?php foreach (PERMISSIONS as $pk => [$pl, $pd]): ?>
           <label class="perm"><input type="checkbox" name="perms[]" value="<?= h($pk) ?>" data-def-admin="<?= in_array($pk, ROLE_DEFAULT_PERMISSIONS['admin'], true) ? 1 : 0 ?>" data-def-pms_lead="<?= in_array($pk, ROLE_DEFAULT_PERMISSIONS['pms_lead'], true) ? 1 : 0 ?>" <?= $oldPerms !== null ? (in_array($pk, $oldPerms, true) ? 'checked' : '') : (in_array($pk, ROLE_DEFAULT_PERMISSIONS[in_array($oldRole, CONFIGURABLE_PERM_ROLES, true) ? $oldRole : 'pms_lead'], true) ? 'checked' : '') ?>><span><b><?= h($pl) ?></b><small><?= h($pd) ?></small></span></label>

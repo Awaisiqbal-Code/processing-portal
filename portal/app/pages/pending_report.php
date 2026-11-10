@@ -38,6 +38,7 @@ $oid = $isLead ? (int)get('officer') : (int)$u['id'];
 if ($oid && !isset($officerById[$oid])) $oid = 0;
 
 // ---------- students and pending evaluation ----------
+[$prScopeW, $prScopeP] = scope_sql($u, 's');   // a country PMS Lead only sees their own countries
 $students = q("SELECT s.*, o.name AS officer_name, fo.name AS fe_user_name,
                       (SELECT MAX(sr.created_at) FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL) AS last_remark_created_at,
                       (SELECT sr.remark_text FROM student_remarks sr WHERE sr.student_id = s.id AND sr.deleted_at IS NULL ORDER BY sr.created_at DESC, sr.id DESC LIMIT 1) AS last_remark_text,
@@ -45,8 +46,8 @@ $students = q("SELECT s.*, o.name AS officer_name, fo.name AS fe_user_name,
                FROM students s
                LEFT JOIN users o ON o.id = s.officer_id
                LEFT JOIN users fo ON fo.id = s.frontend_officer_id
-               WHERE s.student_status = 'active'" . ($oid ? ' AND (s.officer_id = ? OR s.frontend_officer_id = ?)' : '') . "
-               ORDER BY s.id", $oid ? [$oid, $oid] : [])->fetchAll();
+               WHERE s.student_status = 'active' AND $prScopeW" . ($oid ? ' AND (s.officer_id = ? OR s.frontend_officer_id = ?)' : '') . "
+               ORDER BY s.id", array_merge($prScopeP, $oid ? [$oid, $oid] : []))->fetchAll();
 $ids = array_map(fn($r) => (int)$r['id'], $students);
 $docStats = load_doc_stats($ids);
 $appCounts = [];
@@ -233,7 +234,7 @@ page_start($oid ? 'Pending Report · ' . $officerById[$oid]['name'] : 'Officer P
     $cards = [];
     foreach ($officers as $o) {
         $rowsO = $byOfficer[(int)$o['id']];
-        if (!$rowsO && $o['role'] === 'pms_lead') continue;
+        if (!$rowsO && ($o['role'] === 'pms_lead' || pms_lead_countries($u) !== null)) continue;   // country lead: only officers of their countries
         $cards[] = ['o' => $o, 'sum' => summarize_pending($rowsO), 'work' => officer_work_done((int)$o['id'], $fromTs, $toTs), 'rows' => $rowsO];
     }
     $team = ['assigned' => 0, 'with_pending' => 0, 'items' => 0, 'overdue' => 0, 'done' => 0];
