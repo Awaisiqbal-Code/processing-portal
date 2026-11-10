@@ -34,6 +34,19 @@ chmod 664 "$PORTAL_SQLITE" 2>/dev/null || true
 chmod 775 "$(dirname "$PORTAL_SQLITE")" 2>/dev/null || true
 mkdir -p /app/portal/uploads/cache /app/portal/uploads/documents
 
+# Keep uploaded student documents and meeting recordings on the persistent volume.
+# Without this they live on container disk and are wiped on every redeploy/restart.
+if [ -n "$VOLUME_DIR" ] && [ -d "$VOLUME_DIR" ] && [ -w "$VOLUME_DIR" ]; then
+    mkdir -p "$VOLUME_DIR/uploads"
+    if [ ! -L /app/portal/uploads ]; then
+        cp -an /app/portal/uploads/. "$VOLUME_DIR/uploads/" 2>/dev/null || true
+        rm -rf /app/portal/uploads
+        ln -s "$VOLUME_DIR/uploads" /app/portal/uploads
+    fi
+    mkdir -p "$VOLUME_DIR/uploads/cache" "$VOLUME_DIR/uploads/documents" "$VOLUME_DIR/uploads/meetings"
+    echo "[Railway Init] Uploads stored on persistent volume at $VOLUME_DIR/uploads"
+fi
+
 # Automatically apply any pending database migrations (001..006) idempotently on startup
 echo "[Railway Init] Running pending database migrations..."
 php /app/portal/app/migrate.php || true
@@ -52,4 +65,6 @@ trap "kill $CRON_PID 2>/dev/null || true" EXIT INT TERM
 
 PORT_NUM="${PORT:-8000}"
 echo "[Railway Start] Starting Processing Team Portal on 0.0.0.0:${PORT_NUM}..."
+# Several workers so one slow request (backup, AI reply, big upload) does not block other staff
+export PHP_CLI_SERVER_WORKERS="${PHP_CLI_SERVER_WORKERS:-8}"
 exec php -d upload_max_filesize=20M -d post_max_size=22M -S "0.0.0.0:${PORT_NUM}" -t /app/portal /app/portal/router.php
