@@ -461,7 +461,7 @@ function assign_user_role(array $actor, int $targetUserId, string $newRole): arr
         }
     }
     if ($newRole === 'super_admin') {
-        $existingSuperCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin' AND id != ?", [$targetUserId])->fetchColumn();
+        $existingSuperCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin' AND COALESCE(hidden, 0) = 0 AND id != ?", [$targetUserId])->fetchColumn();
         if ($existingSuperCount >= 1) {
             return ['ok' => false, 'code' => 400, 'error' => 'Only one Super Admin is allowed'];
         }
@@ -521,7 +521,7 @@ function create_staff_user(array $actor, string $name, string $username, string 
         }
     }
     if ($role === 'super_admin') {
-        $existingSuperCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin'")->fetchColumn();
+        $existingSuperCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin' AND COALESCE(hidden, 0) = 0")->fetchColumn();
         if ($existingSuperCount >= 1) {
             return ['ok' => false, 'code' => 400, 'error' => 'Only one Super Admin is allowed'];
         }

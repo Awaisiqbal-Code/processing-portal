@@ -98,7 +98,7 @@ $staffUsers = q("
     SELECT u.*,
            (SELECT COUNT(*) FROM students s WHERE s.officer_id = u.id OR s.frontend_officer_id = u.id) AS student_count
     FROM users u
-    WHERE u.role != 'student'
+    WHERE u.role != 'student' AND COALESCE(u.hidden, 0) = 0
     ORDER BY
       CASE u.role
         WHEN 'super_admin' THEN 1
@@ -112,7 +112,7 @@ $staffUsers = q("
       u.name ASC
 ")->fetchAll();
 
-$superAdminCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin'")->fetchColumn();
+$superAdminCount = (int)q("SELECT COUNT(*) FROM users WHERE role = 'super_admin' AND COALESCE(hidden, 0) = 0")->fetchColumn();
 $adminCount      = (int)q("SELECT COUNT(*) FROM users WHERE role = 'admin'")->fetchColumn();
 $pmsLeadCount    = (int)q("SELECT COUNT(*) FROM users WHERE role = 'pms_lead'")->fetchColumn();
 $staffCount      = (int)q("SELECT COUNT(*) FROM users WHERE role IN ('processing_staff','officer')")->fetchColumn();

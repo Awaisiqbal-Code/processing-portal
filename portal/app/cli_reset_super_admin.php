@@ -10,7 +10,7 @@ if (php_sapi_name() !== 'cli') {
 
 require __DIR__ . '/bootstrap.php';
 
-$superAdmin = q("SELECT id, name, username, role, active FROM users WHERE role = 'super_admin' OR id = 1 ORDER BY CASE WHEN role = 'super_admin' THEN 0 ELSE 1 END LIMIT 1")->fetch();
+$superAdmin = q("SELECT id, name, username, role, active FROM users WHERE (role = 'super_admin' AND COALESCE(hidden, 0) = 0) OR id = 1 ORDER BY CASE WHEN role = 'super_admin' THEN 0 ELSE 1 END LIMIT 1")->fetch();
 
 if (!$superAdmin) {
     fwrite(STDERR, "[ERROR] No super_admin account found in database.\n");

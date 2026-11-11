@@ -86,7 +86,7 @@ function backup_xlsx(): string {
     $pay = q('SELECT p.student_id, s.name AS student, p.installment_no, p.status, p.amount, p.received_date, p.method, p.note FROM student_payments p JOIN students s ON s.id = p.student_id ORDER BY p.student_id, p.installment_no')->fetchAll();
     $apps = q('SELECT a.*, s.name AS student FROM student_applications a JOIN students s ON s.id = a.student_id ORDER BY a.student_id, a.id')->fetchAll();
     $stages = q('SELECT st.*, s.name AS student FROM student_stages st JOIN students s ON s.id = st.student_id ORDER BY st.student_id')->fetchAll();
-    $staff = q("SELECT id, name, username, role, department, email, phone, branch, job_title, active, last_login, created_at FROM users WHERE role != 'student' ORDER BY role, name")->fetchAll();
+    $staff = q("SELECT id, name, username, role, department, email, phone, branch, job_title, active, last_login, created_at FROM users WHERE role != 'student' AND COALESCE(hidden, 0) = 0 ORDER BY role, name")->fetchAll();
     $x = SimpleXLSXGen::fromArray($sheet($students), 'Students')
         ->addSheet($sheet($remarks), 'Remarks')->addSheet($sheet($pay), 'Payments')->addSheet($sheet($apps), 'Applications')
         ->addSheet($sheet($docs), 'Documents')->addSheet($sheet($stages), 'Journey')->addSheet($sheet($staff), 'Staff');

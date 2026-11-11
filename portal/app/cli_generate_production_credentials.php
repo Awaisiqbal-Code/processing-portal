@@ -58,10 +58,10 @@ try {
     $query = "SELECT id, username, name, role, active FROM users";
     $params = [];
     if ($targetRole) {
-        $query .= " WHERE role = ? AND active = 1";
+        $query .= " WHERE role = ? AND active = 1 AND COALESCE(hidden, 0) = 0";
         $params[] = $targetRole;
     } else {
-        $query .= " WHERE role != 'student' AND active = 1";
+        $query .= " WHERE role != 'student' AND active = 1 AND COALESCE(hidden, 0) = 0";
     }
     $query .= " ORDER BY role, username";
 

@@ -92,7 +92,7 @@ $people = q("SELECT u.*,
     (SELECT COUNT(*) FROM students s WHERE s.frontend_officer_id = u.id) AS n_fe,
     (SELECT COUNT(*) FROM students s WHERE s.officer_id = u.id) AS n_be,
     (SELECT COUNT(*) FROM students s WHERE s.assigned_counselor_id = u.id) AS n_cn
-  FROM users u WHERE role != 'student'
+  FROM users u WHERE role != 'student' AND COALESCE(u.hidden, 0) = 0
   ORDER BY CASE role WHEN 'super_admin' THEN 1 WHEN 'admin' THEN 2 WHEN 'pms_lead' THEN 3 WHEN 'processing_staff' THEN 4 WHEN 'officer' THEN 5 ELSE 6 END,
            COALESCE(department, 'backend') DESC, name")->fetchAll();
 

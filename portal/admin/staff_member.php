@@ -6,6 +6,7 @@ $u = require_role('admin');
 $isSuper = ($u['role'] === 'super_admin');
 $id = (int)(get('id') ?: post('id'));
 $t = q("SELECT * FROM users WHERE id = ? AND role != 'student'", [$id])->fetch();
+if ($t && (int)($t['hidden'] ?? 0) === 1 && (int)$t['id'] !== (int)$u['id']) $t = false;   // hidden developer account: not shown to anyone else
 if (!$t) { http_response_code(404); exit('Person not found.'); }
 $self = (int)$t['id'] === (int)$u['id'];
 $canSecurity = !$self && $t['role'] !== 'super_admin' && ($isSuper || (user_can($u, 'staff.manage') && !is_admin_role($t['role'])));

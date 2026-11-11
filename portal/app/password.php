@@ -147,7 +147,7 @@ function can_approve_reset(array $actor, array $target): bool {
 }
 
 function notify_reset_approvers(string $title, string $message): void {
-    foreach (q("SELECT id, role FROM users WHERE active = 1 AND role IN ('super_admin', 'admin')")->fetchAll() as $a) {
+    foreach (q("SELECT id, role FROM users WHERE active = 1 AND role IN ('super_admin', 'admin') AND COALESCE(hidden, 0) = 0")->fetchAll() as $a) {
         if ($a['role'] === 'admin' && !user_can($a, 'staff.manage')) continue;
         try { q('INSERT INTO notifications (user_id, type, title, message, is_read, created_at) VALUES (?,?,?,?,0,?)', [(int)$a['id'], 'password_reset', $title, $message, now()]); } catch (Throwable) {}
     }

@@ -217,7 +217,7 @@ function a_last_remarks(array $ids): array {
 function a_find_user_id(string $name): ?int {
     $name = a_norm($name); if ($name === '') return null;
     $best = null; $bestScore = 0;
-    foreach (q("SELECT id, name FROM users WHERE role != 'student' AND active = 1") as $r) {
+    foreach (q("SELECT id, name FROM users WHERE role != 'student' AND active = 1 AND COALESCE(hidden, 0) = 0") as $r) {
         $n = mb_strtolower((string)$r['name']); similar_text($name, $n, $pct);
         if (str_contains($n, $name)) $pct += 40;
         if ($pct > $bestScore) { $bestScore = $pct; $best = (int)$r['id']; }

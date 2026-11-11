@@ -904,7 +904,7 @@ function process_pending_reminders(?int $fakeTime = null): array {
 
     $defaultPmsLeadId = (int)setting('default_pms_lead_id', 0);
     $adminUser = q("SELECT id FROM users WHERE role = 'admin' AND active = 1 LIMIT 1")->fetch();
-    $escalationRecipientId = $adminUser ? (int)$adminUser['id'] : (int)q("SELECT id FROM users WHERE role = 'super_admin' AND active = 1 LIMIT 1")->fetchColumn();
+    $escalationRecipientId = $adminUser ? (int)$adminUser['id'] : (int)q("SELECT id FROM users WHERE role = 'super_admin' AND active = 1 AND COALESCE(hidden, 0) = 0 LIMIT 1")->fetchColumn();
 
     $pendingStudents = q("
         SELECT id, name, pending_since, assigned_pms_lead_id
