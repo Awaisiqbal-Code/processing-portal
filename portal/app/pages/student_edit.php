@@ -362,7 +362,7 @@ if (is_post() && post('action') === 'save') {
             if (!$isNew && !array_key_exists($k, $_POST)) continue;
             $v = mb_substr(post($k), 0, $type === 'textarea' ? 5000 : 500);
             if ($type === 'yn' && !in_array($v, ['', 'Yes', 'No'], true)) $v = '';
-            if ($type === 'select' && !in_array($v, $k === 'country' ? array_merge([''], portal_countries(true), ['Other']) : $f[2], true)) $v = $r[$k] ?? '';
+            if ($type === 'select' && !in_array($v, match ($k) { 'country' => array_merge([''], portal_countries(true), ['Other']), 'branch' => array_merge([''], branch_list()), default => $f[2] }, true)) $v = $r[$k] ?? '';
             if ($type === 'date' && $v !== '' && !valid_date($v)) { $errors[] = $f[0] . ' is not a valid date.'; }
             if ($type === 'url' && $v !== '' && !safe_link($v)) { $errors[] = 'The Drive link must start with https://'; }
             $data[$k] = $v === '' ? null : $v;

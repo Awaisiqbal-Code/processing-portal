@@ -1003,7 +1003,52 @@ function intake_suggestions(): array {
     return $out;
 }
 
-const BRANCHES = ['Lahore', 'Faisalabad', 'Islamabad', 'Sargodha', 'Multan', 'Karachi', 'Peshawar', 'Other'];
+const BRANCHES = ['Lahore', 'Faisalabad', 'Islamabad', 'Sargodha', 'Multan', 'Karachi', 'Peshawar', 'Minchinabad', 'Other'];
+
+/** Office branches: the built-in ones plus any the Super Admin added ("+ Add new branch"); "Other" stays last. */
+function branch_list(): array {
+    $custom = json_decode((string)setting('custom_branches', '[]'), true);
+    $list = array_values(array_filter(BRANCHES, fn($b) => $b !== 'Other'));
+    foreach (is_array($custom) ? $custom : [] as $b) {
+        $b = trim((string)$b);
+        if ($b !== '' && !in_array(mb_strtolower($b), array_map('mb_strtolower', $list), true)) $list[] = $b;
+    }
+    $list[] = 'Other';
+    return $list;
+}
+
+/** Adds a branch to the list (Super Admin / Admin). Returns the saved name, or null if the name is not valid. */
+function add_branch(string $name, array $actor): ?string {
+    if (!in_array($actor['role'] ?? '', ['super_admin', 'admin'], true)) return null;
+    $name = trim(preg_replace('/\s+/', ' ', $name));
+    if (mb_strlen($name) < 2 || mb_strlen($name) > 40 || !preg_match('/^[\p{L} .\'-]+$/u', $name)) return null;
+    $name = mb_convert_case($name, MB_CASE_TITLE);
+    foreach (branch_list() as $b) if (mb_strtolower($b) === mb_strtolower($name)) return $b;   // already there
+    $custom = json_decode((string)setting('custom_branches', '[]'), true);
+    $custom = is_array($custom) ? $custom : [];
+    $custom[] = $name;
+    set_setting('custom_branches', json_encode(array_values($custom)));
+    log_action('Added branch ' . $name);
+    return $name;
+}
+
+/** Branch from a form: a listed branch, or a new one typed after choosing "+ Add new branch". */
+function branch_from_form(array $in, ?array $actor = null): string {
+    $b = trim((string)($in['branch'] ?? ''));
+    if ($b === '__new__') return $actor ? (add_branch((string)($in['branch_new'] ?? ''), $actor) ?? '') : '';
+    return in_array($b, branch_list(), true) ? $b : '';
+}
+
+/** <option> list for a branch dropdown; keeps a value that is not in the list (e.g. imported from a sheet). */
+function branch_options(?string $current, bool $allowAdd = false): string {
+    $cur = trim((string)$current);
+    $list = branch_list();
+    if ($cur !== '' && !in_array($cur, $list, true)) array_unshift($list, $cur);
+    $out = '';
+    foreach ($list as $b) $out .= '<option' . ($cur === $b ? ' selected' : '') . '>' . h($b) . '</option>';
+    if ($allowAdd) $out .= '<option value="__new__">+ Add new branch…</option>';
+    return $out;
+}
 /** Has this university application actually been sent? (Shortlisted / pending / pre-apply = not yet.) */
 function app_is_submitted(?string $status): bool {
     $st = strtolower(trim((string)$status));

@@ -122,7 +122,8 @@ page_start($t['name'] . ' · Team', $u, PORTALS[$u['role']]['label']);
     <label class="f"><span>Username</span><input name="username" value="<?= h($t['username']) ?>" required pattern="[a-z0-9._\-]{3,40}" <?= $ro ?>></label>
     <label class="f"><span>Email</span><input type="email" name="email" value="<?= h($t['email'] ?? '') ?>" required <?= $ro ?>></label>
     <label class="f"><span>WhatsApp number</span><input type="tel" name="phone" value="<?= h($t['phone'] ?? '') ?>" required placeholder="0300 1234567" <?= $ro ?>></label>
-    <label class="f"><span>Branch</span><select name="branch" <?= $ro ?>><option value="">—</option><?php foreach (BRANCHES as $b): ?><option <?= ($t['branch'] ?? '') === $b ? 'selected' : '' ?>><?= h($b) ?></option><?php endforeach; ?></select></label>
+    <label class="f"><span>Branch</span><select name="branch" data-branch-select <?= $ro ?>><option value="">—</option><?= branch_options($t['branch'] ?? null, $editable) ?></select>
+      <input name="branch_new" maxlength="40" placeholder="New branch name" data-branch-new hidden></label>
     <label class="f"><span>Job title</span><input name="job_title" value="<?= h($t['job_title'] ?? '') ?>" maxlength="80" <?= $ro ?>></label>
     <?php if ($editable): ?><div class="f"><span>&nbsp;</span><button class="btn primary" type="submit">Save details</button></div><?php endif; ?>
   </form>

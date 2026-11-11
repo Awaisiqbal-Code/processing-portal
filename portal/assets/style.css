@@ -1949,3 +1949,6 @@ details[open] > summary { color: var(--fg); }
 .countries-tbl { min-width: 900px; }
 .country-add input[type=color], .countries-tbl input[type=color] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; vertical-align: middle; }
 .country-add input[type=color] { width: 100%; }
+
+/* Branch: new-branch box sits under its dropdown */
+[data-branch-new] { margin-top: 8px; }

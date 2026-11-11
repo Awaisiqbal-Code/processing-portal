@@ -1110,3 +1110,20 @@ document.addEventListener('click', function (e) {
     if (c) c.textContent = c.textContent.indexOf('•') === 0 ? c.getAttribute('data-secret') : '••••••';
   }
 });
+
+/* ---- Branch dropdown: "+ Add new branch…" shows a box to type the new branch ---- */
+(function () {
+  function onReady(fn) { if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+  onReady(function () {
+    document.querySelectorAll('select[data-branch-select]').forEach(function (sel) {
+      var box = sel.parentElement.querySelector('[data-branch-new]');
+      if (!box) return;
+      var sync = function () {
+        var on = sel.value === '__new__';
+        box.hidden = !on; box.required = on;
+        if (on) box.focus();
+      };
+      sel.addEventListener('change', sync); sync();
+    });
+  });
+})();

@@ -113,7 +113,7 @@ function country_field_groups(string $country): array {
     if (!in_array($c, $countryOpts, true) && $c !== '') $countryOpts[] = $c;
     $label = $c;                          // sheet titles show the real country name
     $c = country_sheet_format($c);        // a new country reuses the layout chosen for it
-    $branchOpts  = ['', 'Lahore', 'Faisalabad', 'Islamabad', 'Sargodha', 'Multan', 'Karachi', 'Peshawar', 'Other'];
+    $branchOpts  = array_merge([''], branch_list());
     $refundOpts  = ['', '30%', '50%', '90%', 'Non-Refundable'];
 
     return match ($c) {

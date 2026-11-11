@@ -254,7 +254,8 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
       <label class="f"><span>Email *</span><input type="email" name="email" required maxlength="150" value="<?= h($old['email'] ?? '') ?>" placeholder="name@scholarshiphive.com"></label>
       <label class="f"><span>WhatsApp number *</span><input type="tel" name="phone" required maxlength="20" value="<?= h($old['phone'] ?? '') ?>" placeholder="0300 1234567" inputmode="tel"></label>
       <label class="f"><span>Username <small class="muted">(for sign-in)</small></span><input name="username" pattern="[a-z0-9._\-]{3,40}" maxlength="40" value="<?= h($old['username'] ?? '') ?>" placeholder="made from the name" autocomplete="off" data-username></label>
-      <label class="f"><span>Branch</span><select name="branch"><option value="">—</option><?php foreach (BRANCHES as $b): ?><option <?= ($old['branch'] ?? '') === $b ? 'selected' : '' ?>><?= h($b) ?></option><?php endforeach; ?></select></label>
+      <label class="f"><span>Branch</span><select name="branch" data-branch-select><option value="">—</option><?= branch_options($old['branch'] ?? null, true) ?></select>
+        <input name="branch_new" maxlength="40" placeholder="New branch name, e.g. Gujranwala" data-branch-new hidden></label>
       <label class="f"><span>Job title</span><input name="job_title" maxlength="80" value="<?= h($old['job_title'] ?? '') ?>" placeholder="e.g. Senior Processing Officer"></label>
     </div>
 

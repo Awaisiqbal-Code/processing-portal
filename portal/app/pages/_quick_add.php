@@ -65,7 +65,7 @@ $qaSel = fn(string $k, $val) => ((string)($qaOld[$k] ?? '') === (string)$val) ? 
         <label class="f"><span>Applying for</span><input name="applied_for" list="qa-applied" value="<?= $qaV('applied_for') ?>" placeholder="Masters / Bachelors / Erasmus"></label>
         <datalist id="qa-applied"><?php foreach (field_suggestions('applied_for') as $o): ?><option value="<?= h($o) ?>"></option><?php endforeach; ?></datalist>
         <label class="f"><span>Branch</span>
-          <select name="branch"><option value="">Not set</option><?php foreach (BRANCHES as $b): ?><option <?= $qaSel('branch', $b) ?>><?= h($b) ?></option><?php endforeach; ?></select>
+          <select name="branch"><option value="">Not set</option><?php foreach (branch_list() as $b): ?><option <?= $qaSel('branch', $b) ?>><?= h($b) ?></option><?php endforeach; ?></select>
         </label>
         <label class="f"><span>Registration date</span><input type="date" name="received_date" value="<?= $qaV('received_date', date('Y-m-d')) ?>" max="<?= date('Y-m-d', strtotime('+1 day')) ?>"></label>
       </div>

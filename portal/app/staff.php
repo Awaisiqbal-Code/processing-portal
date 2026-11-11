@@ -197,7 +197,7 @@ function suggest_username(string $name): string {
 }
 
 /** Validates and cleans the contact part of a staff form. Returns [data, errors]. */
-function staff_clean_details(array $in, ?int $exceptId = null): array {
+function staff_clean_details(array $in, ?int $exceptId = null, ?array $actor = null): array {
     $err = [];
     $name = trim(mb_substr((string)($in['name'] ?? ''), 0, 150));
     if ($name === '') $err[] = 'Enter the full name.';
@@ -206,8 +206,8 @@ function staff_clean_details(array $in, ?int $exceptId = null): array {
     elseif (q('SELECT 1 FROM users WHERE LOWER(email) = ? AND id != ?', [$email, (int)$exceptId])->fetchColumn()) $err[] = 'Another account already uses this email.';
     $phone = normalize_phone($in['phone'] ?? '');
     if ($phone === null) $err[] = 'Enter a valid WhatsApp number, e.g. 0300 1234567.';
-    $branch = trim((string)($in['branch'] ?? ''));
-    if ($branch !== '' && !in_array($branch, BRANCHES, true)) $branch = '';
+    $branch = branch_from_form($in, $actor ?? current_user());
+    if (trim((string)($in['branch'] ?? '')) === '__new__' && $branch === '') $err[] = 'Type the new branch name (letters only).';
     $title = trim(mb_substr((string)($in['job_title'] ?? ''), 0, 80));
     return [['name' => $name, 'email' => $email, 'phone' => $phone, 'branch' => $branch ?: null, 'job_title' => $title ?: null], $err];
 }
@@ -226,7 +226,7 @@ function dept_for_role(string $role, ?string $dept): string {
 /** Add a person (Super Admin only) with contact details, team and access. */
 function create_staff_member(array $actor, array $in): array {
     if (($actor['role'] ?? '') !== 'super_admin') return ['ok' => false, 'error' => 'Only the Super Admin can add people.'];
-    [$d, $err] = staff_clean_details($in);
+    [$d, $err] = staff_clean_details($in, null, $actor);
     $role = (string)($in['role'] ?? '');
     if (!isset(STAFF_ROLE_OPTIONS[$role])) $err[] = 'Choose a role.';
     $username = strtolower(trim((string)($in['username'] ?? '')));
@@ -252,7 +252,7 @@ function update_staff_details(array $actor, int $id, array $in): array {
     if (($actor['role'] ?? '') !== 'super_admin') return ['ok' => false, 'error' => 'Only the Super Admin can edit staff details.'];
     $t = q("SELECT * FROM users WHERE id = ? AND role != 'student'", [$id])->fetch();
     if (!$t) return ['ok' => false, 'error' => 'Person not found.'];
-    [$d, $err] = staff_clean_details($in, $id);
+    [$d, $err] = staff_clean_details($in, $id, $actor);
     $username = strtolower(trim((string)($in['username'] ?? $t['username'])));
     if (!preg_match('/^[a-z0-9._-]{3,40}$/', $username)) $err[] = 'Username: 3 to 40 letters, numbers, dots or dashes.';
     elseif (q('SELECT 1 FROM users WHERE LOWER(username) = ? AND id != ?', [$username, $id])->fetchColumn()) $err[] = 'That username is already taken.';
