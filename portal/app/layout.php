@@ -16,6 +16,7 @@ function nav_items(string $role): array {
             'admin/consent_templates.php' => 'Consent Templates',
             'admin/verify_docs.php'       => 'Verify documents',
             'admin/staff.php'             => 'Team',
+            'admin/countries.php'         => 'Countries',
             'admin/logins.php'            => 'Student logins',
             'admin/backup.php'            => 'Backup',
         ],
@@ -86,6 +87,7 @@ function nav_icon(string $href): string {
         'applications'      => '<path d="M4 7h16v13H4z"/><path d="M8 7V4h8v3"/><path d="m9 13 2 2 4-4"/>',
         'roles'             => '<path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
         'logins'            => '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l2 2M15 8l2 2"/>',
+        'countries'         => '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/>',
         'backup'            => '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/><path d="M3 15v4a2 2 0 0 0 2 2"/><path d="M21 15v4a2 2 0 0 1-2 2"/>',
         default             => '<circle cx="12" cy="12" r="8"/>',
     };
@@ -97,11 +99,14 @@ function country_flag(?string $country): string {
     $code = match (trim((string)$country)) {
         'Italy' => 'it', 'France' => 'fr', 'Germany' => 'de', 'Czech Republic' => 'cz', 'Austria' => 'at', 'China' => 'cn', default => '',
     };
-    return $code !== '' ? '<span class="flag flag-' . $code . '" title="' . h($country) . '" aria-hidden="true"></span>' : '<span class="flag flag-xx" aria-hidden="true"></span>';
+    if ($code !== '') return '<span class="flag flag-' . $code . '" title="' . h($country) . '" aria-hidden="true"></span>';
+    // a country added in Admin → Countries: show its 2-letter code as a small badge
+    $cc = function_exists('country_row') ? strtoupper(substr((string)(country_row($country)['code'] ?? ''), 0, 2)) : '';
+    return $cc !== '' ? '<span class="flag flag-code" title="' . h($country) . '" aria-hidden="true">' . h($cc) . '</span>' : '<span class="flag flag-xx" aria-hidden="true"></span>';
 }
 function country_flags_map(): array {
     $m = [];
-    foreach (['Italy', 'France', 'Germany', 'Czech Republic', 'Austria', 'China'] as $c) $m[$c] = country_flag($c);
+    foreach (portal_countries(true) as $c) $m[$c] = country_flag($c);
     return $m;
 }
 

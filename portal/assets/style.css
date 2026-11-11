@@ -1938,3 +1938,14 @@ details[open] > summary { color: var(--fg); }
 .backup-card p { margin: 6px 0 0; }
 .backup-card .btn { align-self: flex-start; }
 .backup-tree pre { margin: 10px 0 0; padding: 14px; border-radius: 12px; background: var(--sunk); border: 1px solid var(--line); overflow-x: auto; font-size: 13px; line-height: 1.55; color: var(--fg-body); }
+
+/* Countries page + flag badge for countries added by the Super Admin */
+.flag-code { width: auto; min-width: 18px; padding: 0 3px; background: var(--line-strong); color: var(--fg); font: 700 8px/12px system-ui, sans-serif; text-align: center; letter-spacing: .02em; }
+.countries-tbl td { vertical-align: middle; }
+.countries-tbl tr.is-off td { opacity: .55; }
+.countries-tbl select { max-width: 190px; }
+.country-add { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: end; }
+.countries-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+.countries-tbl { min-width: 900px; }
+.country-add input[type=color], .countries-tbl input[type=color] { width: 44px; height: 32px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; vertical-align: middle; }
+.country-add input[type=color] { width: 100%; }

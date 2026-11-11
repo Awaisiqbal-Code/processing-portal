@@ -449,7 +449,7 @@ function quick_register_student(array $actor, array $in): array {
     if ($hasParts && mb_strlen($firstName) < 2) $errors[] = 'Enter the first name.';
     elseif (mb_strlen($name) < 2) $errors[] = 'Enter the student name.';
     $country = trim((string)($in['country'] ?? ''));
-    $countries = array_merge(SUPPORTED_COUNTRIES, ['Other']);
+    $countries = array_merge(portal_countries(), ['Other']);
     if (!in_array($country, $countries, true)) $errors[] = 'Choose a destination country.';
     $level = in_array($in['program_level'] ?? '', ['BS', 'MS'], true) ? $in['program_level'] : null;
     $email = trim((string)($in['email'] ?? ''));

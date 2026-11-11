@@ -368,7 +368,7 @@ page_start('Dashboard', $u, PORTALS[$u['role']]['label']);
   </div>
   <div class="cc-grid">
     <?php foreach ($countryStats as $cName => $st):
-        $tint = $countryTint[$cName] ?? '#1392CB';
+        $tint = $countryTint[$cName] ?? ((string)(country_row($cName)['color'] ?? '') ?: '#1392CB');
         $docsPct = $pct($st['docs_ok'], $st['active']);
         $appPct = $pct($st['sent'], $st['sent'] + $st['left']);
         $cq = rawurlencode($cName);

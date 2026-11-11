@@ -228,11 +228,7 @@ page_start('University Programs & Applications', $u, PORTALS[$u['role']]['label'
         <input type="hidden" name="action" value="add_program">
         <label class="f"><span>Country *</span>
           <select name="country" required>
-            <option value="Czech Republic">Czech Republic</option>
-            <option value="Germany">Germany</option>
-            <option value="France">France</option>
-            <option value="Italy">Italy</option>
-            <option value="Austria">Austria</option>
+            <?php foreach (portal_countries() as $pc): ?><option value="<?= h($pc) ?>"><?= h($pc) ?></option><?php endforeach; ?>
           </select>
         </label>
         <label class="f"><span>University Name *</span><input name="university" required placeholder="e.g. Charles University"></label>

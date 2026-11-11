@@ -281,7 +281,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
     <div data-show-for="pms_lead">
       <div class="step-h"><span>3</span> Countries they lead <small class="muted">— they see only these countries' students (tick one or more)</small></div>
       <div class="perm-grid">
-        <?php $oldLc = (array)($old['lead_countries'] ?? []); foreach (array_values(array_unique(array_merge(SUPPORTED_COUNTRIES, all_countries()))) as $c): ?>
+        <?php $oldLc = (array)($old['lead_countries'] ?? []); foreach (array_values(array_unique(array_merge(portal_countries(), all_countries()))) as $c): ?>
           <label class="perm"><input type="checkbox" name="lead_countries[]" value="<?= h($c) ?>" <?= in_array($c, $oldLc, true) ? 'checked' : '' ?>><span><b><?= country_flag($c) ?> <?= h($c) ?></b><small>Students, officers &amp; reports of <?= h($c) ?></small></span></label>
         <?php endforeach; ?>
       </div>

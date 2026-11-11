@@ -1,7 +1,34 @@
 <?php
 declare(strict_types=1);
 
-const SUPPORTED_COUNTRIES = ['Italy', 'France', 'Germany', 'Czech Republic', 'Austria', 'China'];
+const SUPPORTED_COUNTRIES = ['Italy', 'France', 'Germany', 'Czech Republic', 'Austria', 'China'];   // built-in sheet layouts (and fallback list)
+
+/** Every country row from Admin → Countries (cached per request). Falls back to the built-in list before migration 015. */
+function country_rows(bool $refresh = false): array {
+    static $rows = null;
+    if ($rows !== null && !$refresh) return $rows;
+    try {
+        $rows = q('SELECT * FROM countries ORDER BY sort_order, name')->fetchAll();
+    } catch (Throwable) {
+        $rows = array_map(fn($c) => ['name' => $c, 'code' => null, 'sheet_format' => $c, 'default_officer_id' => null, 'color' => null, 'active' => 1], SUPPORTED_COUNTRIES);
+    }
+    return $rows;
+}
+/** Country names for pick lists. Inactive countries are hidden from new choices but kept on existing students. */
+function portal_countries(bool $includeInactive = false): array {
+    return array_values(array_map(fn($r) => (string)$r['name'], array_filter(country_rows(), fn($r) => $includeInactive || (int)$r['active'] === 1)));
+}
+function country_row(?string $name): ?array {
+    $n = mb_strtolower(trim((string)$name));
+    foreach (country_rows() as $r) if (mb_strtolower((string)$r['name']) === $n) return $r;
+    return null;
+}
+/** Which built-in sheet layout a country's student form uses (a new country picks one when it is added). */
+function country_sheet_format(string $country): string {
+    if (in_array($country, SUPPORTED_COUNTRIES, true)) return $country;
+    $f = (string)(country_row($country)['sheet_format'] ?? 'Italy');
+    return in_array($f, SUPPORTED_COUNTRIES, true) ? $f : 'Italy';
+}
 
 // Master superset of all student fields: key => [label, type, options]
 // Types: text, date, yn, select, officer, textarea, readonly_textarea, url
@@ -82,13 +109,16 @@ const FIELD_GROUPS = [
  */
 function country_field_groups(string $country): array {
     $c = trim($country) ?: 'Italy';
-    $countryOpts = ['', 'Italy', 'France', 'Germany', 'Czech Republic', 'Austria', 'China', 'Other'];
+    $countryOpts = array_merge([''], portal_countries(), ['Other']);
+    if (!in_array($c, $countryOpts, true) && $c !== '') $countryOpts[] = $c;
+    $label = $c;                          // sheet titles show the real country name
+    $c = country_sheet_format($c);        // a new country reuses the layout chosen for it
     $branchOpts  = ['', 'Lahore', 'Faisalabad', 'Islamabad', 'Sargodha', 'Multan', 'Karachi', 'Peshawar', 'Other'];
     $refundOpts  = ['', '30%', '50%', '90%', 'Non-Refundable'];
 
     return match ($c) {
         'France' => [
-            'France Sheet — Student Registration & Contact Details' => [
+            "{$label} Sheet — Student Registration & Contact Details" => [
                 'name'           => ['Student Name', 'text'],
                 'country'        => ['Destination Country', 'select', $countryOpts],
                 'contact_number' => ['Contact Number (WhatsApp)', 'text'],
@@ -102,7 +132,7 @@ function country_field_groups(string $country): array {
                 'dues'           => ['Dues / Consultancy Balance', 'text'],
                 'refund'         => ['Refund Policy Tier', 'select', $refundOpts],
             ],
-            'France Sheet — Campus France, CV/SOP, Mock Interview & Portals' => [
+            "{$label} Sheet — Campus France, CV/SOP, Mock Interview & Portals" => [
                 'email'                 => ['Email Made by Processor', 'text'],
                 'student_password'      => ['Email / Account Password', 'text'],
                 'recovery_email'        => ['Recovery Email', 'text'],
@@ -122,7 +152,7 @@ function country_field_groups(string $country): array {
             ],
         ],
         'Germany' => [
-            'Germany Sheet — Student Registration & Academic Profile' => [
+            "{$label} Sheet — Student Registration & Academic Profile" => [
                 'name'           => ['Student Name', 'text'],
                 'country'        => ['Destination Country', 'select', $countryOpts],
                 'counselor'      => ['Counselor', 'counselor'],
@@ -139,7 +169,7 @@ function country_field_groups(string $country): array {
                 'dues'           => ['Dues / Consultancy Status', 'text'],
                 'refund'         => ['Refund Status', 'select', $refundOpts],
             ],
-            'Germany Sheet — Uni-Assist, Documents, Portals & Embassy' => [
+            "{$label} Sheet — Uni-Assist, Documents, Portals & Embassy" => [
                 'consent'             => ['Consent Form Received', 'yn'],
                 'docs_checklist'      => ['Documents Checklist Provided', 'yn'],
                 'pending_docs_note'   => ['Update Names of Pending Documents', 'textarea'],
@@ -161,7 +191,7 @@ function country_field_groups(string $country): array {
             ],
         ],
         'Czech Republic', 'Austria' => [
-            "{$c} Sheet — Student Registration & Academic Profile" => [
+            "{$label} Sheet — Student Registration & Academic Profile" => [
                 'name'           => ['Student Name', 'text'],
                 'country'        => ['Destination Country', 'select', $countryOpts],
                 'counselor'      => ['Counselor', 'counselor'],
@@ -177,7 +207,7 @@ function country_field_groups(string $country): array {
                 'contact_number' => ['Client Phone No', 'text'],
                 'refund'         => ['Refund Status', 'select', $refundOpts],
             ],
-            "{$c} Sheet — Nostrification, Portals, Embassy & Admission" => [
+            "{$label} Sheet — Nostrification, Portals, Embassy & Admission" => [
                 'consent'             => ['Consent Form Received', 'yn'],
                 'docs_checklist'      => ['Documents Checklist Provided', 'yn'],
                 'pending_docs_note'   => ['Update Names of Pending Documents', 'textarea'],
@@ -199,7 +229,7 @@ function country_field_groups(string $country): array {
             ],
         ],
         'China' => [
-            'China Sheet — Student Registration & Academic Profile' => [
+            "{$label} Sheet — Student Registration & Academic Profile" => [
                 'name'           => ['Student Name', 'text'],
                 'country'        => ['Destination Country', 'select', $countryOpts],
                 'counselor'      => ['Counselor', 'counselor'],
@@ -215,7 +245,7 @@ function country_field_groups(string $country): array {
                 'program_level'  => ['Degree Tab Level (BS / MS)', 'select', ['', 'BS', 'MS']],
                 'ielts_score'    => ['IELTS / MOI', 'text'],
             ],
-            'China Sheet — Documents, CSC/University Portal & Status' => [
+            "{$label} Sheet — Documents, CSC/University Portal & Status" => [
                 'pending_docs_note'   => ['Update Names of Pending Documents', 'textarea'],
                 'docs_checklist'      => ['All Documents Submitted', 'yn'],
                 'drive_link'          => ['Documents Drive Link', 'url'],
@@ -235,7 +265,7 @@ function country_field_groups(string $country): array {
             ],
         ],
         default => [
-            'Italy Sheet — Student Basics & Registration' => [
+            "{$label} Sheet — Student Basics & Registration" => [
                 'name'                => ['Student name', 'text'],
                 'country'             => ['Destination Country', 'select', $countryOpts],
                 'program_level'       => ['Program Level (BS / MS)', 'select', ['', 'BS', 'MS']],
@@ -251,7 +281,7 @@ function country_field_groups(string $country): array {
                 'student_password'    => ['Account / Portal Password', 'text'],
                 'consult1'            => ['Consultancy received', 'select', ['', '1st', '2nd', '3rd']],
             ],
-            'Italy Sheet — Onboarding & UniverseItaly Credentials' => [
+            "{$label} Sheet — Onboarding & UniverseItaly Credentials" => [
                 'portal_id'         => ['UniverseItaly Portal ID', 'text'],
                 'portal_password'   => ['UniverseItaly Portal Password', 'text'],
                 'shortlisting'      => ['University Shortlisting', 'text'],
@@ -265,12 +295,12 @@ function country_field_groups(string $country): array {
                 'drive_link'        => ['Student Documents Drive folder link', 'url'],
                 'meeting_link'      => ['Recorded Meeting / Zoom Link', 'url'],
             ],
-            'Italy Sheet — Tax Consultant Meeting' => [
+            "{$label} Sheet — Tax Consultant Meeting" => [
                 'meeting_priority' => ['Meeting priority', 'select', ['', 'High', 'Normal', 'Low']],
                 'tax_meeting'      => ['Tax consultant meeting done', 'yn'],
                 'follow_up_3'      => ['If not, follow-up date', 'date'],
             ],
-            'Italy Sheet — Offer, Enrollment, Installments & Visa' => [
+            "{$label} Sheet — Offer, Enrollment, Installments & Visa" => [
                 'offer'               => ['Admission / offer received', 'yn'],
                 'enrollment'          => ['Enrollment / summary received', 'yn'],
                 'enrollment_date'     => ['Enrollment summary received date', 'date'],

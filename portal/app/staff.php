@@ -241,7 +241,7 @@ function create_staff_member(array $actor, array $in): array {
       [$d['email'], $d['phone'], $d['branch'], $d['job_title'], $perms, $id]);
     staff_log($id, 'created', null, STAFF_ROLE_OPTIONS[$role] . (is_officer_like_role($role) ? ' · ' . team_label($dept) : ''), 0, null, (int)$actor['id']);
     if ($role === 'pms_lead') {
-        $valid = array_values(array_unique(array_merge(all_countries(), SUPPORTED_COUNTRIES)));
+        $valid = array_values(array_unique(array_merge(all_countries(), portal_countries(true))));
         $lc = array_values(array_filter(array_map('strval', (array)($in['lead_countries'] ?? [])), fn($c) => in_array($c, $valid, true)));
         if ($lc) q('UPDATE users SET countries = ? WHERE id = ?', [json_encode($lc), $id]);
     }
@@ -464,7 +464,8 @@ function staff_history(int $id, int $limit = 40): array {
 function all_countries(): array {
     $c = array_column(q("SELECT DISTINCT TRIM(country) AS c FROM students WHERE TRIM(COALESCE(country, '')) != '' ORDER BY 1")->fetchAll(), 'c');
     try { foreach (q("SELECT DISTINCT TRIM(country) AS c FROM consent_templates WHERE TRIM(COALESCE(country, '')) != '' AND LOWER(country) != 'general'") as $r) $c[] = $r['c']; } catch (Throwable) {}
-    $c = array_values(array_unique($c));
+    foreach (portal_countries(true) as $pc) $c[] = $pc;   // countries added in Admin → Countries, even before their first student
+    $c = array_values(array_unique(array_filter($c, fn($x) => $x !== 'Other')));
     sort($c);
     return $c;
 }
@@ -501,7 +502,7 @@ function can_see_country(array $u, ?string $country): bool {
 
 function set_extra_countries(array $actor, int $id, array $countries): array {
     if (($actor['role'] ?? '') !== 'super_admin') return ['ok' => false, 'error' => 'Only the Super Admin can give country access.'];
-    $valid = array_values(array_unique(array_merge(all_countries(), SUPPORTED_COUNTRIES)));
+    $valid = array_values(array_unique(array_merge(all_countries(), portal_countries(true))));
     $clean = array_values(array_filter(array_map('trim', array_map('strval', $countries)), fn($c) => in_array($c, $valid, true)));
     $old = extra_countries($id);
     q('UPDATE users SET countries = ? WHERE id = ?', [$clean ? json_encode($clean) : null, $id]);

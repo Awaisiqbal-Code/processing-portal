@@ -205,7 +205,7 @@ page_start($t['name'] . ' · Team', $u, PORTALS[$u['role']]['label']);
   <form method="post">
     <?= csrf_field() ?><input type="hidden" name="action" value="countries"><input type="hidden" name="id" value="<?= $id ?>">
     <div class="perm-grid">
-      <?php foreach (array_values(array_unique(array_merge(SUPPORTED_COUNTRIES, all_countries()))) as $c): $on = in_array($c, $leadC, true); ?>
+      <?php foreach (array_values(array_unique(array_merge(portal_countries(), all_countries()))) as $c): $on = in_array($c, $leadC, true); ?>
         <label class="perm"><input type="checkbox" name="countries[]" value="<?= h($c) ?>" <?= $on ? 'checked' : '' ?> <?= $isSuper ? '' : 'disabled' ?>><span><b><?= country_flag($c) ?> <?= h($c) ?></b><small><?= $on ? 'Leads this country' : 'No access' ?></small></span></label>
       <?php endforeach; ?>
     </div>

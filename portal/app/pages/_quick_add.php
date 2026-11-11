@@ -48,7 +48,7 @@ $qaSel = fn(string $k, $val) => ((string)($qaOld[$k] ?? '') === (string)$val) ? 
         <label class="f"><span>Destination country *</span>
           <select name="country" required data-qa-country>
             <option value="">Choose…</option>
-            <?php foreach (array_merge(SUPPORTED_COUNTRIES, ['Other']) as $c): ?>
+            <?php foreach (array_merge(portal_countries(), ['Other']) as $c): ?>
               <option <?= $qaSel('country', $c) ?>><?= h($c) ?></option>
             <?php endforeach; ?>
           </select>

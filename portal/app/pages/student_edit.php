@@ -362,7 +362,7 @@ if (is_post() && post('action') === 'save') {
             if (!$isNew && !array_key_exists($k, $_POST)) continue;
             $v = mb_substr(post($k), 0, $type === 'textarea' ? 5000 : 500);
             if ($type === 'yn' && !in_array($v, ['', 'Yes', 'No'], true)) $v = '';
-            if ($type === 'select' && !in_array($v, $f[2], true)) $v = $r[$k] ?? '';
+            if ($type === 'select' && !in_array($v, $k === 'country' ? array_merge([''], portal_countries(true), ['Other']) : $f[2], true)) $v = $r[$k] ?? '';
             if ($type === 'date' && $v !== '' && !valid_date($v)) { $errors[] = $f[0] . ' is not a valid date.'; }
             if ($type === 'url' && $v !== '' && !safe_link($v)) { $errors[] = 'The Drive link must start with https://'; }
             $data[$k] = $v === '' ? null : $v;
@@ -592,6 +592,9 @@ if ($isNew) {
     $r['country'] = $activeCountry;
     if (empty($r['program_level'])) $r['program_level'] = 'MS';
     if (empty($r['received_date'])) $r['received_date'] = today();
+    if (empty($r['officer_id']) && ($cDef = (int)(country_row($activeCountry)['default_officer_id'] ?? 0))) {
+        $r['officer_id'] = $cDef;             // default back-end officer set in Admin → Countries
+    }
     if (empty($r['officer_id'])) {
         $defaultOfficerUser = match ($activeCountry) {
             'France'                   => 'muhammad.usman',
@@ -751,7 +754,7 @@ page_start($isNew ? "Add {$activeCountry} Student" : $r['name'], $u, PORTALS[$u[
     <span class="small" style="font-weight:700; color:var(--fg); margin-right:0.3rem;">Sheet format:</span>
     <?php
       $cFlags = country_flags_map();
-      foreach (SUPPORTED_COUNTRIES as $cOpt):
+      foreach (portal_countries() as $cOpt):
           $switchHref = $isNew
               ? url($base . '/student.php?new=1&country=' . rawurlencode($cOpt))
               : url($base . '/student.php?id=' . (int)$id . '&country=' . rawurlencode($cOpt));

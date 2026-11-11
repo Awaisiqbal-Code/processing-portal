@@ -179,7 +179,7 @@ require APP . '/assistant.php';
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
         $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '014_fix_moiz_tanveer_country'")->fetchColumn();
+            && q("SELECT 1 FROM schema_migrations WHERE version = '015_countries'")->fetchColumn();
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();
