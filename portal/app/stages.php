@@ -269,6 +269,7 @@ function country_field_groups(string $country): array {
                 'name'                => ['Student name', 'text'],
                 'country'             => ['Destination Country', 'select', $countryOpts],
                 'program_level'       => ['Program Level (BS / MS)', 'select', ['', 'BS', 'MS']],
+                'gpa'                 => ['CGPA', 'text'],
                 'counselor'           => ['Counselor', 'counselor'],
                 'frontend_officer_id' => ['Front-End Processing Officer (Nimra / Mujassam)', 'officer'],
                 'officer_id'          => ['Back-End Processing Officer (Minahil / Sehrish / Farwa)', 'officer'],
