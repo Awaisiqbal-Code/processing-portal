@@ -105,7 +105,8 @@ function current_user(?string $role = null): ?array {
             // own database copy) — never sign anyone out on that basis.
             $dbToken = (string)($row['session_token'] ?? '');
             $myToken = (string)($_SESSION['auth'][$slot]['sid'] ?? '');
-            if ($dbToken !== '' && $dbToken !== $myToken) {
+            // On Vercel every server copy has its own database, so a token from another copy proves nothing.
+            if ($dbToken !== '' && $dbToken !== $myToken && !getenv('VERCEL')) {
                 unset($_SESSION['auth'][$slot]);
                 $_SESSION['session_replaced'] = true;
                 continue;
@@ -336,6 +337,11 @@ function require_role(string $role, bool $allowPasswordChange = false): array {
                     $_SESSION['staff_last_active'] = time();
                 }
 
+                if ((int)$u['must_change_password'] && !empty($_SESSION['pw_set'][(int)$u['id']])) {
+                    // Password was already set in this sign-in (another server copy may still hold the old flag): don't ask again
+                    try { q('UPDATE users SET must_change_password = 0 WHERE id = ?', [(int)$u['id']]); } catch (Throwable) {}
+                    $u['must_change_password'] = 0;
+                }
                 if ((int)$u['must_change_password'] && !$allowPasswordChange && !is_json_request()) {
                     redirect('account/password.php?portal=' . $u['role']);
                 }

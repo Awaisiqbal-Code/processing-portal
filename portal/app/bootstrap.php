@@ -111,15 +111,22 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // Stateless HMAC-signed cookie fallback for serverless environments (Vercel)
-const PTP_COOKIE_SECRET = 'ptp_vercel_hmac_key_2026_9f8e7d6c5b4a3';
+// The signing secret must NOT live in the code: set PORTAL_COOKIE_SECRET in the host's environment variables.
+// Until it is set, the old built-in value is used so nobody is signed out.
+define('PTP_COOKIE_SECRET', (string)(getenv('PORTAL_COOKIE_SECRET') ?: getenv('PORTAL_APP_KEY') ?: 'ptp_vercel_hmac_key_2026_9f8e7d6c5b4a3'));
+define('PTP_COOKIE_SECRET_FROM_ENV', (bool)(getenv('PORTAL_COOKIE_SECRET') ?: getenv('PORTAL_APP_KEY')));
 if (!empty($_COOKIE['PTPSESSDATA'])) {
     $parts = explode('.', (string)$_COOKIE['PTPSESSDATA'], 2);
     if (count($parts) === 2 && hash_equals(hash_hmac('sha256', $parts[0], PTP_COOKIE_SECRET), $parts[1])) {
         $decoded = json_decode((string)base64_decode($parts[0], true), true);
+        // "Password already set in this sign-in" always carries over, so no server copy asks for it again.
+        if (is_array($decoded) && !empty($decoded['pw_set']) && is_array($decoded['pw_set'])) {
+            $_SESSION['pw_set'] = ($_SESSION['pw_set'] ?? []) + array_filter($decoded['pw_set']);
+        }
         // Only fall back to the signed cookie when the server-side session is empty (serverless cold start).
         $nativeSessionAlive = !empty($_SESSION['csrf']) || !empty($_SESSION['auth']);
         if (is_array($decoded) && !$nativeSessionAlive) {
-            foreach (['auth', 'last_login_role', 'csrf', 'flash', 'last', 'staff_last_active'] as $k) {
+            foreach (['auth', 'last_login_role', 'csrf', 'flash', 'last', 'staff_last_active', 'pw_set'] as $k) {
                 if (empty($_SESSION[$k]) && isset($decoded[$k])) {
                     $_SESSION[$k] = $decoded[$k];
                 }
@@ -151,6 +158,7 @@ register_shutdown_function(function () use ($https): void {
             'flash'             => $_SESSION['flash'] ?? [],
             'last'              => $_SESSION['last'] ?? [],
             'staff_last_active' => $_SESSION['staff_last_active'] ?? null,
+            'pw_set'            => $_SESSION['pw_set'] ?? [],
         ];
         $b64 = base64_encode((string)json_encode($payload));
         $sig = hash_hmac('sha256', $b64, PTP_COOKIE_SECRET);
@@ -179,7 +187,7 @@ require APP . '/assistant.php';
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
         $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '017_sheets_11nov'")->fetchColumn();
+            && q("SELECT 1 FROM schema_migrations WHERE version = '018_developer_no_forced_change'")->fetchColumn();
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();

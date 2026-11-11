@@ -3,7 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/../app/bootstrap.php';
 require APP . '/layout.php';
 $u = require_any();
-$forced = (int)$u['must_change_password'] === 1;
+$forced = (int)$u['must_change_password'] === 1 && empty($_SESSION['pw_set'][(int)$u['id']]);
 $error = null;
 
 if (is_post()) {
@@ -20,6 +20,7 @@ if (is_post()) {
         $tok = $slot !== null ? (string)($_SESSION['auth'][$slot]['sid'] ?? '') : '';
         set_user_password((int)$u['id'], $new, false, $tok !== '' ? $tok : null);
         session_regenerate_id(true);
+        $_SESSION['pw_set'][(int)$u['id']] = 1;   // remembered for this sign-in on every server copy
         log_action('Changed password');
         flash('Password changed.');
         redirect(PORTALS[$u['role']]['home']);
