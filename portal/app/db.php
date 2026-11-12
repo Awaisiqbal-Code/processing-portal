@@ -11,10 +11,19 @@ function db(): PDO {
         try {
             $t = turso_pdo();
             if (!turso_ensure_ready($t)) exit;
-        } catch (PDOException $e) {
-            error_log('Turso connection failed: ' . $e->getMessage());
+        } catch (Throwable $e) {
+            // Show the reason (it never contains the token) so the setup can be fixed without digging in the host logs.
+            $why = preg_replace('/^SQLSTATE\[\w+\]: General error: /', '', $e->getMessage());
+            $where = basename($e->getFile()) . ':' . $e->getLine();
+            error_log('Turso connection failed: ' . get_class($e) . ': ' . $e->getMessage() . ' at ' . $where);
             http_response_code(503);
-            exit('The portal cannot reach its online database right now. Please try again in a minute.');
+            header('Cache-Control: no-store');
+            echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database</title>'
+               . '<body style="font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.5">'
+               . '<h1 style="font-size:20px">The portal cannot reach its online database</h1>'
+               . '<p>Reason: <code style="background:#f1f5f9;padding:2px 6px;border-radius:6px;word-break:break-word">' . htmlspecialchars($why, ENT_QUOTES) . '</code></p>'
+               . '<p style="color:#64748b;font-size:14px">' . htmlspecialchars(get_class($e) . ' · ' . $where, ENT_QUOTES) . ' · Refresh in a minute; if it stays, send this page to your developer.</p></body>';
+            exit;
         }
         return $pdo = $t;
     }

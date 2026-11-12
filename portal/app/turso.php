@@ -429,9 +429,9 @@ function turso_copy_tables(PDO $src, PDO $dst, ?callable $getPos, ?callable $set
         if ($off === 0) $dst->exec($ifNot((string)$t['sql'], 'TABLE'));
         $cols = array_map(fn($c) => (string)$c['name'], $src->query('PRAGMA table_info("' . str_replace('"', '""', $t['name']) . '")')->fetchAll(PDO::FETCH_ASSOC));
         $colSql = implode(',', array_map(fn($c) => '"' . str_replace('"', '""', $c) . '"', $cols));
-        $per = max(1, min(400, intdiv(3000, max(1, count($cols)))));   // rows per INSERT
+        $per = max(1, min(100, intdiv(900, max(1, count($cols)))));    // rows per INSERT (stays under 999 values per statement)
         while (true) {
-            $rows = $src->query('SELECT ' . $colSql . ' FROM "' . str_replace('"', '""', $t['name']) . '" ORDER BY rowid LIMIT ' . ($per * 8) . ' OFFSET ' . (int)$off)->fetchAll(PDO::FETCH_NUM);
+            $rows = $src->query('SELECT ' . $colSql . ' FROM "' . str_replace('"', '""', $t['name']) . '" ORDER BY rowid LIMIT ' . ($per * 4) . ' OFFSET ' . (int)$off)->fetchAll(PDO::FETCH_NUM);
             if (!$rows) break;
             $reqs = [];
             foreach (array_chunk($rows, $per) as $chunk) {
