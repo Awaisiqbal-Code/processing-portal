@@ -106,7 +106,7 @@ function current_user(?string $role = null): ?array {
             $dbToken = (string)($row['session_token'] ?? '');
             $myToken = (string)($_SESSION['auth'][$slot]['sid'] ?? '');
             // On Vercel every server copy has its own database, so a token from another copy proves nothing.
-            if ($dbToken !== '' && $dbToken !== $myToken && !getenv('VERCEL')) {
+            if ($dbToken !== '' && $dbToken !== $myToken && (!getenv('VERCEL') || turso_enabled())) {
                 unset($_SESSION['auth'][$slot]);
                 $_SESSION['session_replaced'] = true;
                 continue;

@@ -118,7 +118,8 @@ function backup_build(array $u, bool $withVideos): array {
     $stats = ['students' => 0, 'documents' => 0, 'consents' => 0, 'videos' => 0, 'templates' => 0, 'missing' => []];
 
     // 1. database — a consistent snapshot
-    try { db()->exec('VACUUM INTO ' . db()->quote($dbCopy)); }
+    if (db() instanceof TursoPDO) turso_snapshot($dbCopy);
+    else try { db()->exec('VACUUM INTO ' . db()->quote($dbCopy)); }
     catch (Throwable) { $src = (string)(db()->query('PRAGMA database_list')->fetch()['file'] ?? ''); if (!$src || !copy($src, $dbCopy)) throw new RuntimeException('Could not copy the database.'); }
     $zip->addFile($dbCopy, $root . 'database/portal.sqlite');
 

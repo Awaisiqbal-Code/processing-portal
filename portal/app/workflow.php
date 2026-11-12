@@ -962,7 +962,7 @@ function distinct_values(string $column, int $limit = 30): array {
     static $cache = [];
     if (!in_array($column, $allowed, true)) return [];
     if (isset($cache[$column])) return $cache[$column];
-    $vals = q("SELECT TRIM($column) AS v, COUNT(*) AS c FROM students WHERE $column IS NOT NULL AND TRIM($column) != '' AND LENGTH(TRIM($column)) <= 60 GROUP BY LOWER(TRIM($column)) ORDER BY c DESC LIMIT " . (int)$limit)->fetchAll(PDO::FETCH_COLUMN);
+    $vals = cache_remember("distinct_{$column}_{$limit}", 600, fn() => q("SELECT TRIM($column) AS v, COUNT(*) AS c FROM students WHERE $column IS NOT NULL AND TRIM($column) != '' AND LENGTH(TRIM($column)) <= 60 GROUP BY LOWER(TRIM($column)) ORDER BY c DESC LIMIT " . (int)$limit)->fetchAll(PDO::FETCH_COLUMN));
     return $cache[$column] = $vals;
 }
 

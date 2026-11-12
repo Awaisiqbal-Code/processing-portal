@@ -4,7 +4,20 @@ declare(strict_types=1);
 function db(): PDO {
     static $pdo = null;
     global $CONFIG;
+    if (!empty($GLOBALS['DB_OVERRIDE'])) return $GLOBALS['DB_OVERRIDE'];   // first-start preparation of the Turso data
     if ($pdo) return $pdo;
+    if (function_exists('turso_enabled') && turso_enabled()) {
+        // Permanent online database shared by every server copy (Vercel). See app/turso.php.
+        try {
+            $t = turso_pdo();
+            if (!turso_ensure_ready($t)) exit;
+        } catch (PDOException $e) {
+            error_log('Turso connection failed: ' . $e->getMessage());
+            http_response_code(503);
+            exit('The portal cannot reach its online database right now. Please try again in a minute.');
+        }
+        return $pdo = $t;
+    }
     $opts = [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

@@ -88,7 +88,11 @@ if ($https && !headers_sent()) {
     header('Strict-Transport-Security: max-age=31536000');
 }
 
-if (getenv('VERCEL') && is_writable(sys_get_temp_dir())) {
+require_once APP . '/turso.php';
+if (turso_enabled()) {
+    // Sessions live in the shared online database, so every server copy sees the same sign-in.
+    session_set_save_handler(new TursoSessionHandler(), true);
+} elseif (getenv('VERCEL') && is_writable(sys_get_temp_dir())) {
     session_save_path(sys_get_temp_dir());
 }
 
@@ -115,7 +119,11 @@ if (session_status() === PHP_SESSION_NONE) {
 // Until it is set, the old built-in value is used so nobody is signed out.
 define('PTP_COOKIE_SECRET', (string)(getenv('PORTAL_COOKIE_SECRET') ?: getenv('PORTAL_APP_KEY') ?: 'ptp_vercel_hmac_key_2026_9f8e7d6c5b4a3'));
 define('PTP_COOKIE_SECRET_FROM_ENV', (bool)(getenv('PORTAL_COOKIE_SECRET') ?: getenv('PORTAL_APP_KEY')));
-if (!empty($_COOKIE['PTPSESSDATA'])) {
+if (turso_enabled() && !empty($_COOKIE['PTPSESSDATA']) && !headers_sent()) {
+    // not needed with shared sessions: remove the old signed cookie
+    setcookie('PTPSESSDATA', '', ['expires' => 1, 'path' => base_url() === '' ? '/' : base_url() . '/', 'secure' => $https, 'httponly' => true, 'samesite' => 'Lax']);
+}
+if (!turso_enabled() && !empty($_COOKIE['PTPSESSDATA'])) {
     $parts = explode('.', (string)$_COOKIE['PTPSESSDATA'], 2);
     if (count($parts) === 2 && hash_equals(hash_hmac('sha256', $parts[0], PTP_COOKIE_SECRET), $parts[1])) {
         $decoded = json_decode((string)base64_decode($parts[0], true), true);
@@ -149,7 +157,7 @@ if (!empty($_COOKIE['PTPSESSDATA'])) {
     }
 }
 
-register_shutdown_function(function () use ($https): void {
+if (!turso_enabled()) register_shutdown_function(function () use ($https): void {
     if (!headers_sent()) {
         $payload = [
             'auth'              => $_SESSION['auth'] ?? [],
@@ -186,8 +194,12 @@ require APP . '/assistant.php';
 // Apply pending additive schema migrations automatically (once) so a plain `php -S` run works too.
 if (PHP_SAPI !== 'cli' && empty($GLOBALS['MIGRATION_RUNNING'])) {
     try {
-        $hasMig = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
-            && q("SELECT 1 FROM schema_migrations WHERE version = '018_developer_no_forced_change'")->fetchColumn();
+        $latestMig = basename((string)(array_slice(glob(APP . '/migrations/*.php') ?: [], -1)[0] ?? ''), '.php');
+        $migMarker = turso_enabled() ? turso_marker('mig_' . $latestMig) : null;
+        $hasMig = ($migMarker && is_file($migMarker))
+            || (q("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")->fetchColumn()
+                && q("SELECT 1 FROM schema_migrations WHERE version = ?", [$latestMig])->fetchColumn());
+        if ($hasMig && $migMarker && !is_file($migMarker)) @touch($migMarker);
         if (!$hasMig) {
             require_once APP . '/migrate.php';
             ob_start();

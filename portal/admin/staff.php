@@ -305,7 +305,11 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
 <section class="panel" id="system">
   <div class="panel-h"><h2>System</h2><p>Where the data is kept and how sign-in is protected.</p></div>
   <div class="sys-rows small">
-    <div>Database: <code><?= h($vol['active_db_path']) ?></code> · Backups: <code><?= h($vol['backup_dir']) ?></code></div>
+    <?php if (turso_enabled()): ?>
+    <div>Database: <b>Turso online database</b> <span class="pill sm ok">Permanent · shared by every server copy</span> <code><?= h(parse_url(turso_base_url(), PHP_URL_HOST) ?: '') ?></code></div>
+    <?php else: ?>
+    <div>Database: <code><?= h($vol['active_db_path']) ?></code> · Backups: <code><?= h($vol['backup_dir']) ?></code><?= getenv('VERCEL') ? ' <span class="pill sm warn">Temporary on Vercel: set TURSO_DATABASE_URL</span>' : '' ?></div>
+    <?php endif; ?>
     <div>Hosting: <b><?= $vol['is_railway'] ? 'Railway' : (getenv('VERCEL') ? 'Vercel' : 'Local / standard') ?></b> · Persistent volume: <span class="pill sm <?= $onVolume ? 'ok' : 'warn' ?>"><?= $onVolume ? 'Mounted & writable' : 'Not mounted' ?></span></div>
     <div>One device per account: <b><?= single_session_applies('admin') ? 'On for all staff' : 'Off' ?></b> · Idle warning <?= (int)setting('idle_warning_minutes', 15) ?> min · Auto sign-out <?= (int)setting('idle_logout_minutes', 20) ?> min</div>
     <?php $ms = mail_settings(); ?>

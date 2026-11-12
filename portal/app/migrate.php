@@ -88,6 +88,18 @@ function create_migration_backup(): string {
 function run_migrations(bool $verbose = true): array {
     $GLOBALS['MIGRATION_RUNNING'] = true;
     $pdo = db();
+    $remote = $pdo instanceof TursoPDO;
+    if ($remote) {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS _portal_meta (key TEXT PRIMARY KEY, value TEXT)');
+        $lk = $pdo->prepare("INSERT OR IGNORE INTO _portal_meta (key, value) VALUES ('migrate_lock', ?)");
+        $lk->execute([(string)time()]);
+        if ($lk->rowCount() !== 1) {
+            $held = (int)$pdo->query("SELECT value FROM _portal_meta WHERE key = 'migrate_lock'")->fetchColumn();
+            if (time() - $held < 120) return [];   // another server copy is updating right now
+            $pdo->prepare("UPDATE _portal_meta SET value = ? WHERE key = 'migrate_lock'")->execute([(string)time()]);
+        }
+        register_shutdown_function(function () use ($pdo) { try { $pdo->exec("DELETE FROM _portal_meta WHERE key = 'migrate_lock'"); } catch (Throwable) {} });
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -112,12 +124,12 @@ function run_migrations(bool $verbose = true): array {
             continue;
         }
 
-        $backupPath = create_migration_backup();
+        $backupPath = ($remote || !empty($GLOBALS['DB_OVERRIDE'])) ? '(online database: Turso keeps its own restore points)' : create_migration_backup();
         $beforeCounts = get_table_counts($pdo);
 
         if ($verbose && PHP_SAPI === 'cli') {
             echo "=== Running Migration: {$version} ===\n";
-            echo "Backup created: {$backupPath} (" . filesize($backupPath) . " bytes)\n";
+            echo "Backup created: {$backupPath} (" . (is_file($backupPath) ? filesize($backupPath) : 0) . " bytes)\n";
             echo "Before counts: " . json_encode($beforeCounts) . "\n";
         }
 
@@ -126,8 +138,7 @@ function run_migrations(bool $verbose = true): array {
             throw new RuntimeException("Migration file {$file} must return a callable.");
         }
 
-        $pdo->exec('PRAGMA foreign_keys = OFF');
-        $pdo->exec('BEGIN IMMEDIATE');
+        if (!$remote) { $pdo->exec('PRAGMA foreign_keys = OFF'); $pdo->exec('BEGIN IMMEDIATE'); }
         try {
             $migrationDetails = $migrationFn($pdo);
             $afterCounts = get_table_counts($pdo);
@@ -144,17 +155,17 @@ function run_migrations(bool $verbose = true): array {
             $stmt = $pdo->prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)");
             $stmt->execute([$version, now()]);
 
-            $pdo->exec('COMMIT');
+            if (!$remote) $pdo->exec('COMMIT');
         } catch (Throwable $e) {
-            if ($pdo->inTransaction()) {
+            if (!$remote && $pdo->inTransaction()) {
                 $pdo->exec('ROLLBACK');
             }
-            $pdo->exec('PRAGMA foreign_keys = ON');
+            if (!$remote) $pdo->exec('PRAGMA foreign_keys = ON');
             throw $e;
         }
 
-        $pdo->exec('PRAGMA foreign_keys = ON');
-        $fkErrors = $pdo->query('PRAGMA foreign_key_check')->fetchAll();
+        if (!$remote) $pdo->exec('PRAGMA foreign_keys = ON');
+        $fkErrors = $remote ? [] : $pdo->query('PRAGMA foreign_key_check')->fetchAll();
         if (!empty($fkErrors)) {
             throw new RuntimeException('PRAGMA foreign_key_check failed: ' . json_encode($fkErrors));
         }
