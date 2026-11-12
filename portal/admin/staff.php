@@ -301,7 +301,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
   </form>
 </section>
 <?php endif; ?>
-<?php if ($isSuper): $vol = railway_volume_status(); $onVolume = (bool)$vol['data_dir_writable']; ?>
+<?php if ($isSuper): $vol = railway_volume_status(); $onVolume = (bool)$vol['data_dir_writable']; $permanent = $onVolume || turso_enabled(); ?>
 <section class="panel" id="system">
   <div class="panel-h"><h2>System</h2><p>Where the data is kept and how sign-in is protected.</p></div>
   <div class="sys-rows small">
@@ -310,7 +310,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
     <?php else: ?>
     <div>Database: <code><?= h($vol['active_db_path']) ?></code> · Backups: <code><?= h($vol['backup_dir']) ?></code><?= getenv('VERCEL') ? ' <span class="pill sm warn">Temporary on Vercel: set TURSO_DATABASE_URL</span>' : '' ?></div>
     <?php endif; ?>
-    <div>Hosting: <b><?= $vol['is_railway'] ? 'Railway' : (getenv('VERCEL') ? 'Vercel' : 'Local / standard') ?></b> · Persistent volume: <span class="pill sm <?= $onVolume ? 'ok' : 'warn' ?>"><?= $onVolume ? 'Mounted & writable' : 'Not mounted' ?></span></div>
+    <div>Hosting: <b><?= $vol['is_railway'] ? 'Railway' : (getenv('VERCEL') ? 'Vercel' : 'Local / standard') ?></b> · <?php if (turso_enabled()): ?>Permanent storage: <span class="pill sm ok">Turso online database</span><?php else: ?>Persistent volume: <span class="pill sm <?= $onVolume ? 'ok' : 'warn' ?>"><?= $onVolume ? 'Mounted & writable' : 'Not mounted' ?></span><?php endif; ?></div>
     <div>One device per account: <b><?= single_session_applies('admin') ? 'On for all staff' : 'Off' ?></b> · Idle warning <?= (int)setting('idle_warning_minutes', 15) ?> min · Auto sign-out <?= (int)setting('idle_logout_minutes', 20) ?> min</div>
     <?php $ms = mail_settings(); ?>
     <details class="mail-box" <?= mail_ready() ? '' : 'open' ?>><summary><b>Email (for password reset codes)</b> — <?= mail_ready() ? '<span class="pill sm ok">Ready</span>' : '<span class="pill sm warn">Not set up</span>' ?></summary>
@@ -342,7 +342,7 @@ page_start('Staff and admins', $u, PORTALS[$u['role']]['label']);
       </form>
       <form method="post" class="row-actions" style="margin-top:8px"><?= csrf_field() ?><input type="hidden" name="action" value="ai_test"><button class="btn sm" type="submit" <?= $aiKey === '' ? 'disabled' : '' ?>>Test the connection</button></form>
     </details>
-    <?php if (!$onVolume): ?><div class="flash warn" style="margin:6px 0 0">This server keeps the database on temporary disk<?= getenv('VERCEL') ? ' (Vercel runs several copies, each with its own database)' : '' ?>. Changes can be lost on restart, and “one device per account” cannot be guaranteed across copies. Run the portal on Railway with the <code>/data</code> volume for permanent data.</div><?php endif; ?>
+    <?php if (!$permanent): ?><div class="flash warn" style="margin:6px 0 0">This server keeps the database on temporary disk<?= getenv('VERCEL') ? ' (Vercel runs several copies, each with its own database)' : '' ?>. Changes can be lost on restart, and “one device per account” cannot be guaranteed across copies. Run the portal on Railway with the <code>/data</code> volume for permanent data.</div><?php endif; ?>
   </div>
 </section>
 <?php endif; ?>
