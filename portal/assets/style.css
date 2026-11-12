@@ -1952,3 +1952,7 @@ details[open] > summary { color: var(--fg); }
 
 /* Branch: new-branch box sits under its dropdown */
 [data-branch-new] { margin-top: 8px; }
+
+/* Warning when data is not stored permanently (Vercel without Turso) */
+.storage-alert { margin: 0 0 16px; padding: 12px 16px; border-radius: 12px; border: 1px solid #ef4444; background: rgba(239,68,68,.14); color: var(--fg); font-size: 14px; line-height: 1.5; }
+.storage-alert code { font-size: 12px; }

@@ -312,6 +312,9 @@ function page_start(string $title, ?array $u = null, string $portalLabel = ''): 
 </div>
 <?php endif; ?>
 <main>
+<?php if ($u && is_admin_role($u['role'] ?? '') && getenv('VERCEL') && !turso_enabled()): ?>
+  <div class="storage-alert" role="alert"><b>Changes are NOT being saved permanently.</b> This portal runs on Vercel without its permanent database, so new people, access changes and students disappear when Vercel restarts. In Vercel → Settings → Environment Variables add <code>TURSO_DATABASE_URL</code> and <code>TURSO_AUTH_TOKEN</code> for <b>Production</b>, then redeploy.</div>
+<?php endif; ?>
 <?php if (!empty($GLOBALS['RAILWAY_VOLUME_MISSING'])): ?>
   <div class="flash bad" style="font-weight:600; font-size:15px; border-width:2px; margin-bottom:15px;" role="alert">
     ⚠️ CRITICAL: Railway persistent volume (/data) is NOT mounted or writable! All database writes are disabled to protect against data loss. Attach a persistent volume to /data in Railway service settings.
