@@ -62,6 +62,11 @@ final class TursoClient {
 
     /** Runs a list of Hrana requests on the kept connection and returns their results (throws on SQL errors). */
     public function pipeline(array $requests, bool $retry = true): array {
+        $fresh = $this->baton === null;
+        if ($fresh) {
+            // New connection: same behaviour as the portal's own SQLite (it never enforced foreign keys)
+            array_unshift($requests, ['type' => 'execute', 'stmt' => ['sql' => 'PRAGMA foreign_keys = OFF', 'want_rows' => false]]);
+        }
         $body = ['requests' => $requests];
         if ($this->baton !== null) $body['baton'] = $this->baton;
         $json = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
@@ -94,6 +99,7 @@ final class TursoClient {
             }
             $out[] = $r['response'] ?? [];
         }
+        if ($fresh) array_shift($out);   // result of the PRAGMA added above
         return $out;
     }
 
@@ -423,6 +429,9 @@ function turso_copy_tables(PDO $src, PDO $dst, ?callable $getPos, ?callable $set
     [$ti, $off] = $getPos ? $getPos() : [0, 0];
     $ifNot = fn(string $sql, string $kind) => preg_replace('/^\s*CREATE\s+(UNIQUE\s+)?' . $kind . '\s+(?!IF\s+NOT\s+EXISTS)/i', 'CREATE $1' . $kind . ' IF NOT EXISTS ', $sql, 1);
     $isTurso = $dst instanceof TursoPDO;
+    if ($ti === 0 && $off === 0) {
+        foreach ($tables as $t) if (!in_array($t['name'], $skip, true)) $dst->exec($ifNot((string)$t['sql'], 'TABLE'));   // all tables first
+    }
     for (; $ti < count($tables); $ti++, $off = 0) {
         $t = $tables[$ti];
         if (in_array($t['name'], $skip, true)) continue;
