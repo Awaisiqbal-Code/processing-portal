@@ -89,6 +89,24 @@ if ($https && !headers_sent()) {
 }
 
 require_once APP . '/turso.php';
+
+// Unexpected errors: write the reason to the server log and show a readable page instead of a blank "HTTP ERROR 500".
+if (PHP_SAPI !== 'cli') set_exception_handler(function (Throwable $e): void {
+    $ref = strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
+    error_log("Portal error $ref on " . ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . ($_SERVER['REQUEST_URI'] ?? '') . ': '
+        . get_class($e) . ': ' . $e->getMessage() . ' @ ' . basename($e->getFile()) . ':' . $e->getLine());
+    while (ob_get_level() > 0) @ob_end_clean();
+    if (!headers_sent()) { http_response_code(500); header('Content-Type: text/html; charset=utf-8'); }
+    $showReason = false;
+    try { $cu = function_exists('current_user') ? current_user() : null; $showReason = $cu && is_admin_role($cu['role'] ?? ''); } catch (Throwable) {}
+    $back = htmlspecialchars((string)($_SERVER['HTTP_REFERER'] ?? '/'), ENT_QUOTES);
+    echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong</title>'
+       . '<div style="font-family:system-ui,sans-serif;max-width:560px;margin:12vh auto;padding:0 16px;color:#1d2b3a">'
+       . '<h2>Something went wrong</h2><p>Your last action could not be completed. Please go back and try again. '
+       . 'If it happens again, tell the Admin this code: <b>' . $ref . '</b></p>'
+       . ($showReason ? '<p style="font-size:13px;color:#7a2b2b;background:#fff3f3;padding:8px 10px;border-radius:6px">Reason: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES) . ' (' . htmlspecialchars(basename($e->getFile()), ENT_QUOTES) . ':' . $e->getLine() . ')</p>' : '')
+       . '<p><a href="' . $back . '">← Go back</a></p></div>';
+});
 if (turso_enabled()) {
     // Sessions live in the shared online database, so every server copy sees the same sign-in.
     session_set_save_handler(new TursoSessionHandler(), true);

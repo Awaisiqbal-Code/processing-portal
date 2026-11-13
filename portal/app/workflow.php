@@ -475,7 +475,7 @@ function quick_register_student(array $actor, array $in): array {
 
     // Duplicate guard: same name + same phone or email
     if (!$errors && ($phone !== '' || $email !== '')) {
-        $dup = q('SELECT id, name FROM students WHERE LOWER(TRIM(name)) = LOWER(?) AND ((contact_number IS NOT NULL AND contact_number != "" AND contact_number = ?) OR (email IS NOT NULL AND email != "" AND LOWER(email) = LOWER(?))) LIMIT 1', [$name, $phone, $email])->fetch();
+        $dup = q('SELECT id, name FROM students WHERE LOWER(TRIM(name)) = LOWER(?) AND ((contact_number IS NOT NULL AND contact_number != \'\' AND contact_number = ?) OR (email IS NOT NULL AND email != \'\' AND LOWER(email) = LOWER(?))) LIMIT 1', [$name, $phone, $email])->fetch();
         if ($dup && empty($in['allow_duplicate'])) {
             return ['ok' => false, 'duplicate_id' => (int)$dup['id'], 'error' => "A student named {$dup['name']} with the same phone/email already exists (#{$dup['id']})."];
         }
